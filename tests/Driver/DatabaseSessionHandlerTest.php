@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Driver;
 
 use EzPhp\Session\Driver\DatabaseSessionHandler;
+use EzPhp\Session\SessionException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use Tests\SessionPdoDatabase;
 use Tests\TestCase;
@@ -31,6 +32,27 @@ final class DatabaseSessionHandlerTest extends TestCase
     {
         $this->database = new SessionPdoDatabase('sqlite::memory:');
         $this->handler = new DatabaseSessionHandler($this->database);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_rejects_unsafe_table_name(): void
+    {
+        $this->expectException(SessionException::class);
+
+        new DatabaseSessionHandler($this->database, 'sessions; DROP TABLE users');
+    }
+
+    /**
+     * @return void
+     */
+    public function test_accepts_custom_safe_table_name(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'app_sessions_2');
+        $handler->write('abc', 'payload');
+
+        self::assertSame('payload', $handler->read('abc'));
     }
 
     /**

@@ -56,7 +56,8 @@ final class FileSessionHandler implements SessionHandlerInterface
      */
     public function read(string $id): string
     {
-        $contents = @file_get_contents($this->pathFor($id));
+        $path = $this->pathFor($id);
+        $contents = self::quietly(static fn (): string|false => file_get_contents($path));
 
         return is_string($contents) ? $contents : '';
     }
@@ -129,5 +130,26 @@ final class FileSessionHandler implements SessionHandlerInterface
         }
 
         return $this->directory . '/sess_' . $id;
+    }
+
+    /**
+     * Run a call whose PHP warning is expected and handled through its return value,
+     * without the `@` operator.
+     *
+     * @template T
+     *
+     * @param callable(): T $fn
+     *
+     * @return T
+     */
+    private static function quietly(callable $fn)
+    {
+        set_error_handler(static fn (): bool => true, E_WARNING);
+
+        try {
+            return $fn();
+        } finally {
+            restore_error_handler();
+        }
     }
 }

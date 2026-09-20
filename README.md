@@ -36,7 +36,7 @@ Add it before `ez-php/framework`'s `CsrfMiddleware` and before any `ez-php/auth`
 <?php
 
 return [
-    'driver' => env('SESSION_DRIVER', 'file'),
+    'driver' => getenv('SESSION_DRIVER') ?: 'file',
 
     'file' => [
         'path' => sys_get_temp_dir() . '/ez-session',
@@ -47,15 +47,15 @@ return [
     ],
 
     'redis' => [
-        'host' => env('SESSION_REDIS_HOST', '127.0.0.1'),
-        'port' => (int) env('SESSION_REDIS_PORT', 6379),
-        'database' => (int) env('SESSION_REDIS_DATABASE', 0),
-        'ttl' => (int) env('SESSION_REDIS_TTL', 1440),
+        'host' => getenv('SESSION_REDIS_HOST') ?: '127.0.0.1',
+        'port' => (int) (getenv('SESSION_REDIS_PORT') ?: 6379),
+        'database' => (int) (getenv('SESSION_REDIS_DATABASE') ?: 0),
+        'ttl' => (int) (getenv('SESSION_REDIS_TTL') ?: 1440),
     ],
 
     // 0 disables periodic regeneration; StartSessionMiddleware otherwise
     // regenerates the session id once this many seconds have elapsed.
-    'regenerate_interval' => (int) env('SESSION_REGENERATE_INTERVAL', 0),
+    'regenerate_interval' => (int) (getenv('SESSION_REGENERATE_INTERVAL') ?: 0),
 ];
 ```
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Session\Driver;
 
 use EzPhp\Contracts\DatabaseInterface;
+use EzPhp\Session\SessionException;
 use PDO;
 use SessionHandlerInterface;
 
@@ -23,12 +24,18 @@ final class DatabaseSessionHandler implements SessionHandlerInterface
      * DatabaseSessionHandler Constructor
      *
      * @param DatabaseInterface $database
-     * @param string            $table
+     * @param string            $table Session table; interpolated into SQL, so limited to `[A-Za-z0-9_]`.
+     *
+     * @throws SessionException When the table name contains anything but letters, digits or underscores.
      */
     public function __construct(
         private readonly DatabaseInterface $database,
         private readonly string $table = 'sessions',
     ) {
+        if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $table) !== 1) {
+            throw new SessionException("Invalid session table name '{$table}': only [A-Za-z0-9_] are allowed.");
+        }
+
         $this->createTableIfNeeded();
     }
 
