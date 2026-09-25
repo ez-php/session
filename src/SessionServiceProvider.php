@@ -37,8 +37,7 @@ final class SessionServiceProvider extends ServiceProvider
         $this->app->bind(SessionHandlerInterface::class, function (): SessionHandlerInterface {
             $config = $this->app->make(ConfigInterface::class);
 
-            /** @var string $driver */
-            $driver = $config->get('session.driver', 'file');
+            $driver = self::configString($config, 'session.driver', 'file');
 
             return match ($driver) {
                 'array' => new ArraySessionHandler(),
@@ -56,8 +55,7 @@ final class SessionServiceProvider extends ServiceProvider
      */
     private function makeFileHandler(ConfigInterface $config): FileSessionHandler
     {
-        /** @var string $path */
-        $path = $config->get('session.file.path', sys_get_temp_dir() . '/ez-session');
+        $path = self::configString($config, 'session.file.path', sys_get_temp_dir() . '/ez-session');
 
         return new FileSessionHandler($path);
     }
@@ -71,8 +69,7 @@ final class SessionServiceProvider extends ServiceProvider
     {
         /** @var DatabaseInterface $database */
         $database = $this->app->make(DatabaseInterface::class);
-        /** @var string $table */
-        $table = $config->get('session.database.table', 'sessions');
+        $table = self::configString($config, 'session.database.table', 'sessions');
 
         return new DatabaseSessionHandler($database, $table);
     }
@@ -84,15 +81,44 @@ final class SessionServiceProvider extends ServiceProvider
      */
     private function makeRedisHandler(ConfigInterface $config): RedisSessionHandler
     {
-        /** @var string $host */
-        $host = $config->get('session.redis.host', '127.0.0.1');
-        /** @var int $port */
-        $port = $config->get('session.redis.port', 6379);
-        /** @var int $database */
-        $database = $config->get('session.redis.database', 0);
-        /** @var int $ttl */
-        $ttl = $config->get('session.redis.ttl', 1440);
+        $host = self::configString($config, 'session.redis.host', '127.0.0.1');
+        $port = self::configInt($config, 'session.redis.port', 6379);
+        $database = self::configInt($config, 'session.redis.database', 0);
+        $ttl = self::configInt($config, 'session.redis.ttl', 1440);
 
         return new RedisSessionHandler($host, $port, $database, $ttl);
+    }
+
+    /**
+     * Read a string config value, falling back to $default when it is missing or not a string.
+     *
+     * @param ConfigInterface $config
+     * @param string          $key
+     * @param string          $default
+     *
+     * @return string
+     */
+    private static function configString(ConfigInterface $config, string $key, string $default): string
+    {
+        $value = $config->get($key, $default);
+
+        return is_string($value) ? $value : $default;
+    }
+
+    /**
+     * Read an int config value (int or numeric string, e.g. an uncast getenv() result),
+     * falling back to $default otherwise.
+     *
+     * @param ConfigInterface $config
+     * @param string          $key
+     * @param int             $default
+     *
+     * @return int
+     */
+    private static function configInt(ConfigInterface $config, string $key, int $default): int
+    {
+        $value = $config->get($key, $default);
+
+        return is_int($value) || (is_string($value) && is_numeric($value)) ? (int) $value : $default;
     }
 }

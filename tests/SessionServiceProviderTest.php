@@ -81,4 +81,23 @@ final class SessionServiceProviderTest extends TestCase
 
         $this->assertInstanceOf(FileSessionHandler::class, $container->make(SessionHandlerInterface::class));
     }
+
+    /**
+     * Wrong-typed config values (e.g. an application config that forgot to cast)
+     * fall back to the defaults instead of raising a TypeError.
+     *
+     * @return void
+     */
+    public function test_wrong_typed_config_values_fall_back_to_defaults(): void
+    {
+        $container = new FakeContainer(new FakeConfig([
+            'session.driver' => 42,
+            'session.file.path' => ['not', 'a', 'path'],
+        ]));
+        $provider = new SessionServiceProvider($container);
+
+        $provider->register();
+
+        $this->assertInstanceOf(FileSessionHandler::class, $container->make(SessionHandlerInterface::class));
+    }
 }

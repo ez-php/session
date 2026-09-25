@@ -60,8 +60,7 @@ final class StartSessionMiddleware implements MiddlewareInterface
 
         Flash::age();
 
-        /** @var int $regenerateInterval */
-        $regenerateInterval = $this->config->get('session.regenerate_interval', 0);
+        $regenerateInterval = $this->int('session.regenerate_interval', 0);
 
         if ($regenerateInterval > 0) {
             SessionRegenerator::regenerateIfStale($regenerateInterval);
