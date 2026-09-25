@@ -148,9 +148,11 @@ php make_module.php <name> --description="..." --services=mysql,redis
 ```
 
 `<name>` is the kebab-case package name; the namespace is derived as
-`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum`,
-`opcache` → `OPCache`, and `dotenv` → `Env` are existing exceptions the guess
-gets wrong; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
+`EzPhp\<PascalCase>` (each `-`-separated word upper-cased) unless `--namespace=`
+overrides it. Existing exceptions the guess gets wrong: `bignum` → `BigNum`,
+`dataloader` → `DataLoader`, `dotenv` → `Env`, `graphql` → `GraphQL`, `oauth` → `OAuth`,
+`opcache` → `OPCache`, `swagger-ui` → `SwaggerUI`, `webauthn` → `WebAuthn` and
+`websocket` → `WebSocket`; `websocket-client` → `WebsocketClient`, `websocket-tls` → `WebsocketTls`,
 `webauthn-metadata` → `WebauthnMetadata` and `metrics-statsd` → `MetricsStatsd` are
 intentional lower-case-word namespaces, and `testing-application` shares `EzPhp\Testing\`
 with `testing`).
@@ -170,17 +172,21 @@ stub is written only if the submodule doesn't already ship one, so
 `composer guidelines:sync` has a `# Package:` heading to anchor part 1 against.
 
 It writes `modules/<name>/` and registers the module in the four places the monorepo
-needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
-(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+needs it — root `composer.json` (`autoload.psr-4` **and** the shared
+`autoload-dev` `Tests\` directory list), `phpstan.neon`, `phpunit.xml` (test suite
+**and** coverage source), and `packages.sh` (alphabetical position) — in both
+generated and `--repo` mode.
 
 Two things stay manual on purpose:
 
 - **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
   `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
   would recreate the drift the sync script exists to prevent.
-- **The host-port table below** (`--services` only) — editing it marks every
-  `CLAUDE.md` copy as drifted at once, so the next `composer full` would fail for
-  a brand-new module. The generator prints which ports to claim instead.
+- **The host-port table below** (`--services` only) — claim the "next free" row by
+  editing the table in `CODING_GUIDELINES.md` (never in a `CLAUDE.md` copy) and run
+  `composer guidelines:sync` in the same change. Editing it drifts every `CLAUDE.md`
+  until the sync runs, which is why the generator only reminds you instead of doing
+  it. Skipping the edit leaves "next free" stale, so the next module collides.
 
 ### 4 — Docker scaffold
 
@@ -321,12 +327,12 @@ Thin wrapper over `session_regenerate_id()`. `regenerate()` is unconditional; `r
 
 Implements `MiddlewareInterface` from `ez-php/contracts`. On `handle()`:
 
-1. If no session is active: `session_set_save_handler($handler, true)` then `session_start()`. If a session is already active (started earlier in the pipeline, or by a test harness), this step is skipped entirely — registering a save handler on an already-active session throws.
+1. If no session is active: `session_set_save_handler($handler, true)` then `session_start($this->options($request))` — hardened options built from `session.cookie.*`/`session.strict_mode` (HttpOnly, SameSite=Lax, Secure auto-detected from `HTTPS`, `use_strict_mode`, `use_only_cookies`). If a session is already active (started earlier in the pipeline, or by a test harness), this step is skipped entirely — registering a save handler on an already-active session throws.
 2. `Flash::age()` — unconditional, every request.
 3. If `session.regenerate_interval` (read via `ConfigInterface`, not a constructor scalar — see Design Decisions) is `> 0`, calls `SessionRegenerator::regenerateIfStale()` with that interval.
 4. Calls `$next($request)`.
 
-This formalises the `SessionStartMiddleware` example already documented in `framework/CLAUDE.md` § CSRF Protection — that example is a two-line ad hoc middleware; this module's version adds configurable driver selection, flash aging, and optional periodic regeneration on top of the same "start the session before anything downstream reads it" contract. Must run before `ez-php/framework`'s `CsrfMiddleware` (its `SessionCsrfTokenStore` reads `$_SESSION`) and before any `ez-php/auth` middleware.
+`framework/CLAUDE.md` § CSRF Protection uses this middleware in its setup example (it used to show an ad hoc `SessionStartMiddleware`); compared to a bare `session_start()` this module's version adds configurable driver selection, flash aging, and optional periodic regeneration on top of the same "start the session before anything downstream reads it" contract. Must run before `ez-php/framework`'s `CsrfMiddleware` (its `SessionCsrfTokenStore` reads `$_SESSION`) and before any `ez-php/auth` middleware.
 
 ### SessionServiceProvider (`src/SessionServiceProvider.php`)
 
@@ -342,6 +348,14 @@ Reads `config/session.php` and binds `\SessionHandlerInterface` lazily to the dr
 | `session.redis.database` | int | `0` | Redis database index |
 | `session.redis.ttl` | int | `1440` | Redis key TTL (seconds); mirrors PHP's default `session.gc_maxlifetime` |
 | `session.regenerate_interval` | int | `0` | Seconds between automatic id regenerations; `0` disables the feature |
+| `session.strict_mode` | bool | `true` | `use_strict_mode`: never adopt a client-chosen id (fixation) |
+| `session.cookie.name` | string | `''` | Cookie name; `''` keeps PHP's `session.name` |
+| `session.cookie.secure` | bool\|null | `null` | `null` = Secure on HTTPS requests; set `true` behind a TLS-terminating proxy |
+| `session.cookie.httponly` | bool | `true` | Hide the cookie from JavaScript |
+| `session.cookie.samesite` | string | `'Lax'` | `Lax`, `Strict` or `None` |
+| `session.cookie.lifetime` | int | `0` | Cookie lifetime in seconds; `0` = browser session |
+| `session.cookie.path` | string | `'/'` | Cookie path |
+| `session.cookie.domain` | string | `''` | Cookie domain |
 
 Unknown driver values fall back to `FileSessionHandler`. `StartSessionMiddleware` is **not** auto-registered — add it to the global middleware stack explicitly, the same pattern `ez-php/rate-limiter`'s `ThrottleMiddleware` and `ez-php/framework`'s `CsrfMiddleware` use.
 
@@ -351,6 +365,7 @@ Unknown driver values fall back to `FileSessionHandler`. `StartSessionMiddleware
 
 - **`\SessionHandlerInterface`, not a module-owned interface.** See "The driver contract" above — this is the one module in the monorepo where matching PHP's own native mechanism is the right call, rather than following the `CacheInterface`/`RateLimiterInterface` pattern of a project-defined contract with N drivers behind it.
 - **`Flash` and `SessionRegenerator` are documented global state.** Both operate on `$_SESSION` directly via static methods rather than an injected, constructor-wired instance. This mirrors how `ez-php/auth`'s `Auth` and `ez-php/framework`'s `SessionCsrfTokenStore` already work — `$_SESSION` is PHP's own global, and wrapping it in a DI-friendly instance would not remove the global state, only hide it behind an extra layer that every other session consumer in this monorepo doesn't have.
+- **Sessions start hardened, not with PHP's defaults** — PHP defaults to no `HttpOnly`, no `SameSite` and `use_strict_mode=0`, which with a custom save handler adopts any id a client sends (session fixation). `StartSessionMiddleware::options()` passes secure defaults to `session_start()`, all overridable via `session.cookie.*`/`session.strict_mode`. `Secure` is auto-detected from the `HTTPS` server variable (not `X-Forwarded-Proto`, which a client can forge) — set `session.cookie.secure` to `true` explicitly behind a TLS-terminating proxy. Strict mode only works with a user handler that implements `SessionUpdateTimestampHandlerInterface::validateId()`, so all four bundled handlers do (`updateTimestamp()` delegates to `write()`).
 - **`StartSessionMiddleware` reads `regenerate_interval` from `ConfigInterface` at call time, not a constructor scalar.** A plain `int $regenerateInterval` constructor parameter would need an explicit binding for the container to autowire it (primitives are not autowireable), forcing users to configure the middleware in a service provider by hand instead of `config/session.php`. Injecting `ConfigInterface` (always bound by the core `ConfigServiceProvider`) keeps `StartSessionMiddleware::class` addable via `$app->middleware()` with zero extra wiring.
 - **`DatabaseSessionHandler::write()` is UPDATE-then-INSERT, not an upsert.** `ON DUPLICATE KEY UPDATE` (MySQL) and `INSERT OR REPLACE` (SQLite) are different syntax; writing one code path that works against both trades one extra round-trip for driver portability, consistent with this module's "no driver-specific SQL beyond table DDL" scope.
 - **No static `Session` facade.** Unlike `Cache`, `RateLimiter`, or `Flag`, there is no `Session::get()`/`Session::put()` static wrapper over `$_SESSION` itself — plain `$_SESSION[...]` access already works once `StartSessionMiddleware` has started the session, and adding a facade that just proxies array access would be a distinction without a difference. `Flash` and `SessionRegenerator` exist as separate static classes because they hold actual behaviour (aging, staleness checks), not because "a static session facade" was the goal.

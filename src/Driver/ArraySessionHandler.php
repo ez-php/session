@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Session\Driver;
 
 use SessionHandlerInterface;
+use SessionUpdateTimestampHandlerInterface;
 
 /**
  * Class ArraySessionHandler
@@ -15,7 +16,7 @@ use SessionHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class ArraySessionHandler implements SessionHandlerInterface
+final class ArraySessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * @var array<string, array{data: string, timestamp: int}>
@@ -74,6 +75,35 @@ final class ArraySessionHandler implements SessionHandlerInterface
         unset($this->store[$id]);
 
         return true;
+    }
+
+    /**
+     * Whether a session with this id exists in the store.
+     *
+     * Called by PHP under `session.use_strict_mode`: returning false for an
+     * unknown id makes PHP issue a fresh id instead of adopting one the client
+     * chose (session fixation).
+     *
+     * @param string $id
+     *
+     * @return bool
+     */
+    public function validateId(string $id): bool
+    {
+        return isset($this->store[$id]);
+    }
+
+    /**
+     * Refresh an unchanged session's activity timestamp (lazy_write path).
+     *
+     * @param string $id
+     * @param string $data
+     *
+     * @return bool
+     */
+    public function updateTimestamp(string $id, string $data): bool
+    {
+        return $this->write($id, $data);
     }
 
     /**

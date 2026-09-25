@@ -56,8 +56,26 @@ return [
     // 0 disables periodic regeneration; StartSessionMiddleware otherwise
     // regenerates the session id once this many seconds have elapsed.
     'regenerate_interval' => (int) (getenv('SESSION_REGENERATE_INTERVAL') ?: 0),
+
+    // Reject session ids the client chose (session fixation). Default: true.
+    'strict_mode' => true,
+
+    // Cookie settings passed to session_start(). All keys optional; defaults shown.
+    'cookie' => [
+        'name' => '',          // '' keeps PHP's session.name (PHPSESSID)
+        'secure' => null,      // null = auto (Secure on HTTPS requests); true behind a TLS-terminating proxy
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'lifetime' => 0,       // 0 = until the browser closes
+        'path' => '/',
+        'domain' => '',
+    ],
 ];
 ```
+
+`StartSessionMiddleware` starts every session with these hardened settings instead of PHP's
+permissive defaults (no `HttpOnly`, no `SameSite`, `use_strict_mode=0`). Strict mode works because
+every bundled handler implements `SessionUpdateTimestampHandlerInterface::validateId()`.
 
 | Driver | Value | Notes |
 |---|---|---|

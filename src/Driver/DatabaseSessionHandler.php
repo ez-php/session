@@ -8,6 +8,7 @@ use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Session\SessionException;
 use PDO;
 use SessionHandlerInterface;
+use SessionUpdateTimestampHandlerInterface;
 
 /**
  * Class DatabaseSessionHandler
@@ -18,7 +19,7 @@ use SessionHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class DatabaseSessionHandler implements SessionHandlerInterface
+final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * DatabaseSessionHandler Constructor
@@ -114,6 +115,38 @@ final class DatabaseSessionHandler implements SessionHandlerInterface
         $this->database->execute("DELETE FROM {$this->table} WHERE id = :id", ['id' => $id]);
 
         return true;
+    }
+
+    /**
+     * Whether a session with this id exists in the store.
+     *
+     * Called by PHP under `session.use_strict_mode`: returning false for an
+     * unknown id makes PHP issue a fresh id instead of adopting one the client
+     * chose (session fixation).
+     *
+     * @param string $id
+     *
+     * @return bool
+     */
+    public function validateId(string $id): bool
+    {
+        return $this->database->query(
+            "SELECT 1 AS present FROM {$this->table} WHERE id = :id",
+            ['id' => $id],
+        ) !== [];
+    }
+
+    /**
+     * Refresh an unchanged session's activity timestamp (lazy_write path).
+     *
+     * @param string $id
+     * @param string $data
+     *
+     * @return bool
+     */
+    public function updateTimestamp(string $id, string $data): bool
+    {
+        return $this->write($id, $data);
     }
 
     /**

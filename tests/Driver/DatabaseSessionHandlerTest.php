@@ -138,4 +138,36 @@ final class DatabaseSessionHandlerTest extends TestCase
         $this->assertSame(0, $removed);
         $this->assertSame('data', $this->handler->read('fresh'));
     }
+
+    /**
+     * validateId() backs session.use_strict_mode (session-fixation protection).
+     *
+     * @return void
+     */
+    public function testValidateIdReflectsWhetherTheSessionExists(): void
+    {
+        $id = 'sess-validate';
+
+        $this->assertFalse($this->handler->validateId($id));
+
+        $this->handler->write($id, 'payload');
+        $this->assertTrue($this->handler->validateId($id));
+
+        $this->handler->destroy($id);
+        $this->assertFalse($this->handler->validateId($id));
+    }
+
+    /**
+     * @return void
+     */
+    public function testUpdateTimestampKeepsTheSessionData(): void
+    {
+        $id = 'sess-validate';
+        $this->handler->write($id, 'payload');
+
+        $this->assertTrue($this->handler->updateTimestamp($id, 'payload'));
+        $this->assertSame('payload', $this->handler->read($id));
+
+        $this->handler->destroy($id);
+    }
 }

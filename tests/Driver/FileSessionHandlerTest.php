@@ -138,4 +138,47 @@ final class FileSessionHandlerTest extends TestCase
         $this->assertSame(0, $removed);
         $this->assertSame('data', $this->handler->read('fresh'));
     }
+
+    /**
+     * validateId() backs session.use_strict_mode (session-fixation protection).
+     *
+     * @return void
+     */
+    public function testValidateIdReflectsWhetherTheSessionExists(): void
+    {
+        $id = 'sessvalidate01';
+
+        $this->assertFalse($this->handler->validateId($id));
+
+        $this->handler->write($id, 'payload');
+        $this->assertTrue($this->handler->validateId($id));
+
+        $this->handler->destroy($id);
+        $this->assertFalse($this->handler->validateId($id));
+    }
+
+    /**
+     * @return void
+     */
+    public function testUpdateTimestampKeepsTheSessionData(): void
+    {
+        $id = 'sessvalidate01';
+        $this->handler->write($id, 'payload');
+
+        $this->assertTrue($this->handler->updateTimestamp($id, 'payload'));
+        $this->assertSame('payload', $this->handler->read($id));
+
+        $this->handler->destroy($id);
+    }
+
+    /**
+     * An id with characters that can never name a session file is simply invalid
+     * (strict mode then issues a fresh id) — validateId() must not throw.
+     *
+     * @return void
+     */
+    public function testValidateIdRejectsMalformedIdsWithoutThrowing(): void
+    {
+        $this->assertFalse($this->handler->validateId('../../etc/passwd'));
+    }
 }

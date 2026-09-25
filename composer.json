@@ -1,6 +1,6 @@
 {
   "name": "ez-php/session",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "Session handler drivers (File/Database/Redis/Array), StartSession middleware, flash data, ID regeneration",
   "type": "library",
   "license": "MIT",

@@ -121,6 +121,90 @@ final class StartSessionMiddlewareTest extends TestCase
     }
 
     /**
+     * @return void
+     */
+    public function test_options_default_to_hardened_cookie_settings(): void
+    {
+        $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig());
+
+        $options = $middleware->options($this->makeRequest());
+
+        $this->assertTrue($options['use_strict_mode']);
+        $this->assertTrue($options['use_only_cookies']);
+        $this->assertTrue($options['cookie_httponly']);
+        $this->assertFalse($options['cookie_secure']);
+        $this->assertSame('Lax', $options['cookie_samesite']);
+        $this->assertSame(0, $options['cookie_lifetime']);
+        $this->assertSame('/', $options['cookie_path']);
+        $this->assertArrayNotHasKey('name', $options);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_secure_is_auto_detected_from_https_request(): void
+    {
+        $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig());
+
+        $this->assertTrue($middleware->options($this->makeRequest(server: ['HTTPS' => 'on']))['cookie_secure']);
+        $this->assertFalse($middleware->options($this->makeRequest(server: ['HTTPS' => 'off']))['cookie_secure']);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_config_overrides_the_defaults(): void
+    {
+        $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig([
+            'session.cookie.secure' => true,
+            'session.cookie.samesite' => 'Strict',
+            'session.cookie.lifetime' => 3600,
+            'session.cookie.domain' => 'example.com',
+            'session.cookie.name' => 'app_session',
+        ]));
+
+        $options = $middleware->options($this->makeRequest());
+
+        $this->assertTrue($options['cookie_secure']);
+        $this->assertSame('Strict', $options['cookie_samesite']);
+        $this->assertSame(3600, $options['cookie_lifetime']);
+        $this->assertSame('example.com', $options['cookie_domain']);
+        $this->assertSame('app_session', $options['name']);
+    }
+
+    /**
+     * Regression: sessions were started with PHP defaults (no HttpOnly, no SameSite).
+     *
+     * @return void
+     */
+    public function test_started_session_uses_the_hardened_cookie_params(): void
+    {
+        $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig());
+
+        $middleware->handle($this->makeRequest(), fn (Request $r): Response => new Response('OK', 200));
+
+        $params = session_get_cookie_params();
+        $this->assertTrue($params['httponly']);
+        $this->assertSame('Lax', $params['samesite']);
+        $this->assertSame('1', ini_get('session.use_strict_mode'));
+    }
+
+    /**
+     * Regression: an id chosen by the client was adopted (session fixation).
+     *
+     * @return void
+     */
+    public function test_client_chosen_unknown_session_id_is_not_adopted(): void
+    {
+        $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig());
+        session_id('attackerchosenid1234567890abcdef');
+
+        $middleware->handle($this->makeRequest(), fn (Request $r): Response => new Response('OK', 200));
+
+        $this->assertNotSame('attackerchosenid1234567890abcdef', session_id());
+    }
+
+    /**
      * @param array<string, string> $headers
      * @param array<string, string> $server
      *

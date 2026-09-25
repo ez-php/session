@@ -6,6 +6,7 @@ namespace EzPhp\Session\Driver;
 
 use EzPhp\Session\SessionException;
 use SessionHandlerInterface;
+use SessionUpdateTimestampHandlerInterface;
 
 /**
  * Class FileSessionHandler
@@ -15,7 +16,7 @@ use SessionHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class FileSessionHandler implements SessionHandlerInterface
+final class FileSessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * FileSessionHandler Constructor
@@ -87,6 +88,39 @@ final class FileSessionHandler implements SessionHandlerInterface
         }
 
         return true;
+    }
+
+    /**
+     * Whether a session with this id exists in the store.
+     *
+     * Called by PHP under `session.use_strict_mode`: returning false for an
+     * unknown id makes PHP issue a fresh id instead of adopting one the client
+     * chose (session fixation).
+     *
+     * @param string $id
+     *
+     * @return bool
+     */
+    public function validateId(string $id): bool
+    {
+        if (preg_match('/^[a-zA-Z0-9,\-]+$/', $id) !== 1) {
+            return false;
+        }
+
+        return is_file($this->pathFor($id));
+    }
+
+    /**
+     * Refresh an unchanged session's activity timestamp (lazy_write path).
+     *
+     * @param string $id
+     * @param string $data
+     *
+     * @return bool
+     */
+    public function updateTimestamp(string $id, string $data): bool
+    {
+        return $this->write($id, $data);
     }
 
     /**
