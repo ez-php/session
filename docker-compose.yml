@@ -13,3 +13,11 @@ services:
     working_dir: /var/www/html
     env_file:
       - .env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    container_name: ez-php-session-redis
+    ports:
+      - "${REDIS_HOST_PORT:-6387}:6379"

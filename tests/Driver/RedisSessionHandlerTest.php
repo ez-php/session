@@ -37,7 +37,9 @@ final class RedisSessionHandlerTest extends TestCase
         }
 
         try {
-            $this->handler = new RedisSessionHandler(self::HOST, self::PORT, self::DB, 1440);
+            $host = getenv('REDIS_HOST') ?: self::HOST;
+            $port = (int) (getenv('REDIS_PORT') ?: self::PORT);
+            $this->handler = new RedisSessionHandler($host, $port, self::DB, 1440);
             $this->handler->destroy('abc');
         } catch (Throwable $e) {
             $this->markTestSkipped('Redis server not reachable: ' . $e->getMessage());
