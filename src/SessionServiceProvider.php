@@ -21,6 +21,9 @@ use SessionHandlerInterface;
  *
  * Supported drivers: `array`, `file` (default), `database`, `redis`.
  *
+ * With ez-php/framework installed it also binds the framework's
+ * `CsrfTokenStoreInterface` to `SessionCsrfTokenStore`, unless already bound.
+ *
  * `StartSessionMiddleware` is not auto-registered — add it to the global
  * middleware stack explicitly, matching how `ez-php/rate-limiter`'s
  * `ThrottleMiddleware` and `ez-php/framework`'s `CsrfMiddleware` are wired.
@@ -46,6 +49,31 @@ final class SessionServiceProvider extends ServiceProvider
                 default => $this->makeFileHandler($config),
             };
         });
+
+        $this->bindCsrfTokenStore();
+    }
+
+    /**
+     * Bind ez-php/framework's CsrfTokenStoreInterface to its SessionCsrfTokenStore,
+     * so CsrfMiddleware resolves once sessions are set up.
+     *
+     * By class-name string: this module does not depend on ez-php/framework, so the
+     * binding only happens when the framework is installed, and an application's
+     * own binding (registered earlier) is left alone. A binding registered later
+     * replaces this one as usual.
+     *
+     * @return void
+     */
+    private function bindCsrfTokenStore(): void
+    {
+        $interface = 'EzPhp\\Middleware\\CsrfTokenStoreInterface';
+        $store = 'EzPhp\\Middleware\\SessionCsrfTokenStore';
+
+        if (!interface_exists($interface) || !class_exists($store) || $this->app->has($interface)) {
+            return;
+        }
+
+        $this->app->bind($interface, static fn (): object => new $store());
     }
 
     /**

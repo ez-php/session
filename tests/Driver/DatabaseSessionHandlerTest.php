@@ -170,4 +170,23 @@ final class DatabaseSessionHandlerTest extends TestCase
 
         $this->handler->destroy($id);
     }
+
+    /**
+     * gc() filters on last_activity; SQLite gets the same index as MySQL, named
+     * after the table (SQLite index names are global to the database).
+     *
+     * @return void
+     */
+    public function test_sqlite_table_has_a_last_activity_index(): void
+    {
+        new DatabaseSessionHandler($this->database, 'app_sessions_2');
+
+        $indexes = $this->database->query("SELECT tbl_name, sql FROM sqlite_master WHERE type = 'index' AND name LIKE '%last_activity_idx'");
+        $byTable = array_column($indexes, 'sql', 'tbl_name');
+
+        self::assertArrayHasKey('sessions', $byTable);
+        self::assertArrayHasKey('app_sessions_2', $byTable);
+        self::assertIsString($byTable['sessions']);
+        self::assertStringContainsString('last_activity', $byTable['sessions']);
+    }
 }

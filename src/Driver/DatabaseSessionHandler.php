@@ -181,6 +181,11 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
                     last_activity INTEGER NOT NULL
                 )"
             );
+            // Same index as the MySQL DDL, for gc(). SQLite index names are global to
+            // the database, so it is named after the table.
+            $this->database->getPdo()->exec(
+                "CREATE INDEX IF NOT EXISTS {$this->table}_last_activity_idx ON {$this->table} (last_activity)"
+            );
 
             return;
         }

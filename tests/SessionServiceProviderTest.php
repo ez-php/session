@@ -100,4 +100,58 @@ final class SessionServiceProviderTest extends TestCase
 
         $this->assertInstanceOf(FileSessionHandler::class, $container->make(SessionHandlerInterface::class));
     }
+
+    /**
+     * With ez-php/framework installed, the provider binds the framework's
+     * CsrfTokenStoreInterface to SessionCsrfTokenStore so CsrfMiddleware resolves.
+     *
+     * @return void
+     */
+    public function test_register_binds_the_csrf_token_store_when_the_framework_is_installed(): void
+    {
+        $interface = self::frameworkClass('CsrfTokenStoreInterface');
+
+        if (!interface_exists($interface)) {
+            self::markTestSkipped('ez-php/framework is not installed.');
+        }
+
+        $container = new FakeContainer(new FakeConfig());
+        (new SessionServiceProvider($container))->register();
+
+        self::assertInstanceOf(self::frameworkClass('SessionCsrfTokenStore'), $container->make($interface));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_register_keeps_an_existing_csrf_token_store_binding(): void
+    {
+        $interface = self::frameworkClass('CsrfTokenStoreInterface');
+
+        if (!interface_exists($interface)) {
+            self::markTestSkipped('ez-php/framework is not installed.');
+        }
+
+        $own = (new \ReflectionClass(self::frameworkClass('SessionCsrfTokenStore')))->newInstance();
+        $container = new FakeContainer(new FakeConfig());
+        $container->instance($interface, $own);
+
+        (new SessionServiceProvider($container))->register();
+
+        self::assertSame($own, $container->make($interface));
+    }
+
+    /**
+     * A class of ez-php/framework, by name — this module does not depend on the
+     * framework, so its classes may be absent (the tests then skip).
+     *
+     * @param string $short
+     *
+     * @return class-string
+     */
+    private static function frameworkClass(string $short): string
+    {
+        /** @var class-string */
+        return 'EzPhp\\Middleware\\' . $short;
+    }
 }
