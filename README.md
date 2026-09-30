@@ -28,6 +28,8 @@ $app->middleware(\EzPhp\Session\StartSessionMiddleware::class);
 
 Add it before `ez-php/framework`'s `CsrfMiddleware` and before any `ez-php/auth` middleware — both read `$_SESSION` and assume a session is already active.
 
+With `ez-php/framework` installed, `SessionServiceProvider` also binds `CsrfTokenStoreInterface` → `SessionCsrfTokenStore`, so `CsrfMiddleware` works without a binding of your own. A binding you register earlier is left alone; one you register later replaces it as usual.
+
 ### 3. Configure the driver
 
 `config/session.php`:

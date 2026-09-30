@@ -22,7 +22,8 @@
     "ez-php/http": "^2.0"
   },
   "suggest": {
-    "ext-redis": "Needed for Driver\\RedisSessionHandler"
+    "ext-redis": "Needed for Driver\\RedisSessionHandler",
+    "ez-php/framework": "Binds CsrfTokenStoreInterface → SessionCsrfTokenStore for CsrfMiddleware (by class-name string, only when installed)"
   },
   "require-dev": {
     "ez-php/docker": "^2.0",
