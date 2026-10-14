@@ -16,6 +16,9 @@ use SessionUpdateTimestampHandlerInterface;
  * PDO-backed session driver via `ez-php/contracts`' `DatabaseInterface`.
  * Sessions are stored in a `sessions` table, created automatically
  * (`CREATE TABLE IF NOT EXISTS`) with driver-aware DDL for MySQL and SQLite.
+ * `write()` is a single driver-aware upsert, so it neither depends on
+ * affected-row counts (MySQL reports 0 for an UPDATE that changes nothing)
+ * nor races between two first writes of the same id.
  *
  * @package EzPhp\Session\Driver
  */
@@ -88,19 +91,20 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
      */
     public function write(string $id, string $data): bool
     {
+        $sql = "INSERT INTO {$this->table} (id, payload, last_activity) VALUES (:id, :payload, :now)";
         $now = time();
+        $bindings = ['id' => $id, 'payload' => $data, 'now' => $now];
 
-        $updated = $this->database->execute(
-            "UPDATE {$this->table} SET payload = :payload, last_activity = :now WHERE id = :id",
-            ['payload' => $data, 'now' => $now, 'id' => $id],
-        );
-
-        if ($updated === 0) {
-            $this->database->execute(
-                "INSERT INTO {$this->table} (id, payload, last_activity) VALUES (:id, :payload, :now)",
-                ['id' => $id, 'payload' => $data, 'now' => $now],
-            );
+        if ($this->database->getPdo()->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql') {
+            // Separate placeholders: VALUES() in ON DUPLICATE KEY is deprecated since MySQL 8.0.20.
+            $sql .= ' ON DUPLICATE KEY UPDATE payload = :update_payload, last_activity = :update_now';
+            $bindings += ['update_payload' => $data, 'update_now' => $now];
+        } else {
+            // SQLite 3.24+ and PostgreSQL.
+            $sql .= ' ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, last_activity = excluded.last_activity';
         }
+
+        $this->database->execute($sql, $bindings);
 
         return true;
     }
