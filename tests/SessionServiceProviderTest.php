@@ -154,4 +154,56 @@ final class SessionServiceProviderTest extends TestCase
         /** @var class-string */
         return 'EzPhp\\Middleware\\' . $short;
     }
+
+    /**
+     * session.idle_lifetime reaches the file driver: an idle session is gone on read.
+     *
+     * @return void
+     */
+    public function test_idle_lifetime_config_is_passed_to_the_file_driver(): void
+    {
+        $directory = sys_get_temp_dir() . '/ez-session-provider-' . uniqid();
+        $container = new FakeContainer(new FakeConfig([
+            'session.driver' => 'file',
+            'session.file.path' => $directory,
+            'session.idle_lifetime' => 60,
+        ]));
+        (new SessionServiceProvider($container))->register();
+
+        $handler = $container->make(SessionHandlerInterface::class);
+        $handler->open($directory, 'PHPSESSID');
+        $handler->write('idle', 'data');
+        touch($directory . '/sess_idle', time() - 61);
+
+        try {
+            $this->assertSame('', $handler->read('idle'));
+        } finally {
+            foreach (glob($directory . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            rmdir($directory);
+        }
+    }
+
+    /**
+     * session.idle_lifetime reaches the database driver.
+     *
+     * @return void
+     */
+    public function test_idle_lifetime_config_is_passed_to_the_database_driver(): void
+    {
+        $database = new SessionPdoDatabase('sqlite::memory:');
+        $container = new FakeContainer(new FakeConfig([
+            'session.driver' => 'database',
+            'session.idle_lifetime' => 60,
+        ]));
+        $container->instance(DatabaseInterface::class, $database);
+        (new SessionServiceProvider($container))->register();
+
+        $handler = $container->make(SessionHandlerInterface::class);
+        $handler->write('idle', 'data');
+        $database->execute('UPDATE sessions SET last_activity = :ts WHERE id = :id', ['ts' => time() - 61, 'id' => 'idle']);
+
+        $this->assertSame('', $handler->read('idle'));
+    }
 }

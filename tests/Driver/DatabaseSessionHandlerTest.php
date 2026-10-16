@@ -189,4 +189,88 @@ final class DatabaseSessionHandlerTest extends TestCase
         self::assertIsString($byTable['sessions']);
         self::assertStringContainsString('last_activity', $byTable['sessions']);
     }
+
+    /**
+     * A session idle longer than the configured lifetime is gone on read, without gc() having run.
+     *
+     * @return void
+     */
+    public function testReadReturnsEmptyForASessionIdleLongerThanTheLifetime(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'sessions', 60);
+        $handler->write('idle', 'data');
+        $this->backdate('idle', 61);
+
+        $this->assertSame('', $handler->read('idle'));
+    }
+
+    /**
+     * @return void
+     */
+    public function testValidateIdRejectsASessionIdleLongerThanTheLifetime(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'sessions', 60);
+        $handler->write('idle', 'data');
+        $this->backdate('idle', 61);
+
+        $this->assertFalse($handler->validateId('idle'));
+    }
+
+    /**
+     * @return void
+     */
+    public function testSessionWithinTheLifetimeIsStillReadable(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'sessions', 60);
+        $handler->write('active', 'data');
+        $this->backdate('active', 30);
+
+        $this->assertTrue($handler->validateId('active'));
+        $this->assertSame('data', $handler->read('active'));
+    }
+
+    /**
+     * lazy_write calls updateTimestamp() for an unchanged session; it must refresh last_activity.
+     *
+     * @return void
+     */
+    public function testUpdateTimestampRefreshesTheIdleClock(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'sessions', 60);
+        $handler->write('active', 'data');
+        $this->backdate('active', 50);
+
+        $handler->updateTimestamp('active', 'data');
+        $rows = $this->database->query('SELECT last_activity FROM sessions WHERE id = :id', ['id' => 'active']);
+        $lastActivity = $rows[0]['last_activity'] ?? null;
+
+        $this->assertTrue(is_numeric($lastActivity) && (int) $lastActivity >= time() - 1);
+    }
+
+    /**
+     * @return void
+     */
+    public function testLifetimeZeroDisablesTheIdleCheck(): void
+    {
+        $handler = new DatabaseSessionHandler($this->database, 'sessions', 0);
+        $handler->write('ancient', 'data');
+        $this->backdate('ancient', 1_000_000);
+
+        $this->assertTrue($handler->validateId('ancient'));
+        $this->assertSame('data', $handler->read('ancient'));
+    }
+
+    /**
+     * @param string $id
+     * @param int    $seconds
+     *
+     * @return void
+     */
+    private function backdate(string $id, int $seconds): void
+    {
+        $this->database->execute(
+            'UPDATE sessions SET last_activity = :ts WHERE id = :id',
+            ['ts' => time() - $seconds, 'id' => $id],
+        );
+    }
 }

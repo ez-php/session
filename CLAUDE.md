@@ -198,7 +198,7 @@ Run from the new module root (requires `"ez-php/docker": "^2.0"` in `require-dev
 vendor/bin/docker-init
 ```
 
-This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
+This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders (`docker/db/`, the MySQL init script, only with `--services=mysql`). Existing files are never overwritten.
 
 Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
@@ -243,7 +243,8 @@ After scaffolding:
 | `ez-php/feature-flags` | — | 6385 (`REDIS_HOST_PORT`) | — |
 | `ez-php/scheduler` | — | 6386 (`REDIS_HOST_PORT`) | — |
 | `ez-php/session` | — | 6387 (`REDIS_HOST_PORT`) | — |
-| **next free** | **3312** | **6388** | **7702** |
+| `ez-php/metrics` | — | 6388 (`REDIS_HOST_PORT`) | — |
+| **next free** | **3312** | **6389** | **7702** |
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
@@ -278,8 +279,8 @@ src/
 ├── SessionServiceProvider.php        — Reads config/session.php, binds SessionHandlerInterface to the selected driver
 └── Driver/
     ├── ArraySessionHandler.php       — In-process driver; process lifetime only (tests, CLI)
-    ├── FileSessionHandler.php        — Filesystem driver; sess_<id> files, path-traversal-safe id validation
-    ├── DatabaseSessionHandler.php    — PDO-backed driver via DatabaseInterface; auto-creates `sessions` table
+    ├── FileSessionHandler.php        — Filesystem driver; sess_<id> files, path-traversal-safe id validation, idle-lifetime check on read/validateId
+    ├── DatabaseSessionHandler.php    — PDO-backed driver via DatabaseInterface; auto-creates `sessions` table (MySQL / portable SQLite+PostgreSQL DDL), idle-lifetime check
     └── RedisSessionHandler.php       — ext-redis driver; native TTL, no gc() sweep needed
 
 tests/
@@ -287,15 +288,15 @@ tests/
 ├── SessionPdoDatabase.php                   — Minimal DatabaseInterface fixture backed by raw PDO (avoids a framework dependency)
 ├── FlashTest.php                     — Aging, set/get round-trip, keep(), forget(), all(), not-active guard
 ├── SessionRegeneratorTest.php        — regenerate(), regenerateIfStale() interval logic, not-active guard
-├── StartSessionMiddlewareTest.php    — Session start, idempotent re-entry, flash aging, periodic regeneration
-├── SessionServiceProviderTest.php    — Driver selection from config, unknown-value fallback
+├── StartSessionMiddlewareTest.php    — Session start, idempotent re-entry, flash aging, periodic regeneration, gc_maxlifetime
+├── SessionServiceProviderTest.php    — Driver selection from config, unknown-value fallback, idle_lifetime reaches the file/database drivers
 ├── Support/
 │   ├── FakeConfig.php                — Minimal ConfigInterface stub
 │   └── FakeContainer.php             — Minimal ContainerInterface stub (bindings + instances)
 └── Driver/
     ├── ArraySessionHandlerTest.php
-    ├── FileSessionHandlerTest.php    — Includes path-traversal rejection and gc() via touch()-backdated mtimes
-    ├── DatabaseSessionHandlerTest.php — Runs against SQLite :memory: via Tests\SessionPdoDatabase
+    ├── FileSessionHandlerTest.php    — Includes path-traversal rejection, gc() and the idle-lifetime check via touch()-backdated mtimes
+    ├── DatabaseSessionHandlerTest.php — Runs against SQLite :memory: via Tests\SessionPdoDatabase; gc() and idle-lifetime via backdated last_activity
     ├── DatabaseSessionHandlerMysqlTest.php — Same handler on MySQL (unchanged-payload rewrite, updateTimestamp); skipped without DB_HOST
     └── RedisSessionHandlerTest.php   — Requires live Redis at `REDIS_HOST`/`REDIS_PORT` (default `redis:6379`): module stack `redis` service (host port 6387), CI `redis` service container, or the root stack; skipped when ext-redis is unavailable
 ```
@@ -314,11 +315,11 @@ In-memory `array<string, array{data: string, timestamp: int}>`. Data lives for t
 
 ### FileSessionHandler (`src/Driver/FileSessionHandler.php`)
 
-Filesystem driver. Each session is `sess_<id>` under the configured directory (`LOCK_EX` on write, matching `ez-php/cache`'s `FileDriver`). `pathFor()` validates the id against PHP's own session-id charset (`[a-zA-Z0-9,-]+`) before building a path, and throws `SessionException` otherwise — defence in depth against path traversal via a crafted cookie, in case a non-default `session.sid_bits_per_character` or a custom id generator ever widens what reaches the handler. `gc()` scans `sess_*` and removes files whose mtime is older than `$max_lifetime`.
+Filesystem driver. Each session is `sess_<id>` under the configured directory (`LOCK_EX` on write, matching `ez-php/cache`'s `FileDriver`). `pathFor()` validates the id against PHP's own session-id charset (`[a-zA-Z0-9,-]+`) before building a path, and throws `SessionException` otherwise — defence in depth against path traversal via a crafted cookie, in case a non-default `session.sid_bits_per_character` or a custom id generator ever widens what reaches the handler. `gc()` scans `sess_*` and removes files whose mtime is older than `$max_lifetime`. Independently of `gc()`, the constructor's `$lifetime` (default 1440, `0` disables) makes `read()` return `''` (and delete the file) and `validateId()` return `false` for a session whose mtime is older — `write()`/`updateTimestamp()` refresh the mtime, so only idle sessions expire.
 
 ### DatabaseSessionHandler (`src/Driver/DatabaseSessionHandler.php`)
 
-PDO-backed via `DatabaseInterface` from `ez-php/contracts` (not a raw `PDO` constructor parameter — keeps this module usable with any `DatabaseInterface` implementation, not just `ez-php/framework`'s `Database`). Auto-creates a `sessions` table (`CREATE TABLE IF NOT EXISTS`, driver-aware DDL for MySQL/SQLite), the same pattern `ez-php/queue`'s `DatabaseDriver` uses for `jobs`/`failed_jobs`. `write()` is a single driver-aware upsert: `INSERT … ON DUPLICATE KEY UPDATE` on MySQL, `INSERT … ON CONFLICT (id) DO UPDATE` elsewhere (SQLite 3.24+, PostgreSQL).
+PDO-backed via `DatabaseInterface` from `ez-php/contracts` (not a raw `PDO` constructor parameter — keeps this module usable with any `DatabaseInterface` implementation, not just `ez-php/framework`'s `Database`). Auto-creates a `sessions` table (`CREATE TABLE IF NOT EXISTS`, driver-aware DDL: MySQL types with an inline index, or a portable `TEXT`/`BIGINT` table plus a separate `CREATE INDEX IF NOT EXISTS` for SQLite and PostgreSQL), the same pattern `ez-php/queue`'s `DatabaseDriver` uses for `jobs`/`failed_jobs`. `write()` is a single driver-aware upsert: `INSERT … ON DUPLICATE KEY UPDATE` on MySQL, `INSERT … ON CONFLICT (id) DO UPDATE` elsewhere (SQLite 3.24+, PostgreSQL 9.5+). The constructor's `$lifetime` (default 1440, `0` disables) makes `read()` and `validateId()` ignore a row whose `last_activity` is older.
 
 ### RedisSessionHandler (`src/Driver/RedisSessionHandler.php`)
 
@@ -355,7 +356,8 @@ Reads `config/session.php` and binds `\SessionHandlerInterface` lazily to the dr
 | `session.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `session.redis.port` | int | `6379` | Redis port |
 | `session.redis.database` | int | `0` | Redis database index |
-| `session.redis.ttl` | int | `1440` | Redis key TTL (seconds); mirrors PHP's default `session.gc_maxlifetime` |
+| `session.idle_lifetime` | int | php.ini `session.gc_maxlifetime` (PHP default `1440`) | Server-side idle lifetime (seconds) for the file and database drivers, and `gc_maxlifetime` in `StartSessionMiddleware`; `0` disables the idle check |
+| `session.redis.ttl` | int | `session.idle_lifetime` | Redis key TTL (seconds) — the redis driver's idle lifetime |
 | `session.regenerate_interval` | int | `0` | Seconds between automatic id regenerations; `0` disables the feature |
 | `session.strict_mode` | bool | `true` | `use_strict_mode`: never adopt a client-chosen id (fixation) |
 | `session.cookie.name` | string | `''` | Cookie name; `''` keeps PHP's `session.name` |
@@ -376,6 +378,8 @@ Unknown driver values fall back to `FileSessionHandler`. `register()` also binds
 - **`Flash` and `SessionRegenerator` are documented global state.** Both operate on `$_SESSION` directly via static methods rather than an injected, constructor-wired instance. This mirrors how `ez-php/auth`'s `Auth` and `ez-php/framework`'s `SessionCsrfTokenStore` already work — `$_SESSION` is PHP's own global, and wrapping it in a DI-friendly instance would not remove the global state, only hide it behind an extra layer that every other session consumer in this monorepo doesn't have.
 - **Sessions start hardened, not with PHP's defaults** — PHP defaults to no `HttpOnly`, no `SameSite` and `use_strict_mode=0`, which with a custom save handler adopts any id a client sends (session fixation). `StartSessionMiddleware::options()` passes secure defaults to `session_start()`, all overridable via `session.cookie.*`/`session.strict_mode`. `Secure` is auto-detected from the `HTTPS` server variable (not `X-Forwarded-Proto`, which a client can forge) — set `session.cookie.secure` to `true` explicitly behind a TLS-terminating proxy. Strict mode only works with a user handler that implements `SessionUpdateTimestampHandlerInterface::validateId()`, so all four bundled handlers do (`updateTimestamp()` delegates to `write()`).
 - **`StartSessionMiddleware` reads `regenerate_interval` from `ConfigInterface` at call time, not a constructor scalar.** A plain `int $regenerateInterval` constructor parameter would need an explicit binding for the container to autowire it (primitives are not autowireable), forcing users to configure the middleware in a service provider by hand instead of `config/session.php`. Injecting `ConfigInterface` (always bound by the core `ConfigServiceProvider`) keeps `StartSessionMiddleware::class` addable via `$app->middleware()` with zero extra wiring.
+- **The file and database drivers enforce the idle lifetime on read, not only in `gc()`.** PHP runs `gc()` probabilistically (`session.gc_probability`/`gc_divisor`), and Debian/Ubuntu-packaged PHP sets the probability to 0 and relies on a cron job that only knows about the default files handler — so with a custom handler, sessions (and a stolen session id) would never expire there. `read()` treating an idle session as empty and `validateId()` rejecting it makes expiry deterministic; under strict mode the client then gets a fresh id. `StartSessionMiddleware` sets `gc_maxlifetime` to the same value so `gc()` never deletes a session the handler still considers alive. When `session.idle_lifetime` is unset, the provider, the middleware and the template config all fall back to php.ini's `session.gc_maxlifetime` (`StartSessionMiddleware::iniGcMaxLifetime()`), so a deployment that already tuned it keeps its lifetime instead of silently dropping to 1440 s; the handlers' own constructor default (1440) applies only to direct construction. Redis needs neither: its key TTL is the idle lifetime. `session.idle_lifetime` is deliberately separate from `session.cookie.lifetime` (env `SESSION_LIFETIME`), which only controls the browser cookie.
+- **`DatabaseSessionHandler` creates its table on every construction.** One `CREATE TABLE IF NOT EXISTS` (plus `CREATE INDEX IF NOT EXISTS` outside MySQL) per request that resolves the database driver, so the driver works without a migration step — the same trade-off `ez-php/queue`'s `DatabaseDriver` makes. Both statements are no-ops once the table exists; an application that wants zero DDL at runtime can create the table in a migration and bind its own handler.
 - **`DatabaseSessionHandler::write()` is a driver-aware upsert, not UPDATE-then-INSERT.** The portable UPDATE-then-INSERT-if-0-rows it replaced was broken on MySQL: `rowCount()` there counts *changed* rows, so rewriting an unchanged payload in the same second (two quick requests, or `updateTimestamp()`) reported 0 and the INSERT hit the primary key; two concurrent first writes of a new id also raced on any driver. One statement per driver (`ON DUPLICATE KEY UPDATE` with its own placeholders — `VALUES()` is deprecated since MySQL 8.0.20 — or `ON CONFLICT (id) DO UPDATE … excluded`) fixes both; the driver check is the same one `createTableIfNeeded()` already makes for DDL.
 - **No static `Session` facade.** Unlike `Cache`, `RateLimiter`, or `Flag`, there is no `Session::get()`/`Session::put()` static wrapper over `$_SESSION` itself — plain `$_SESSION[...]` access already works once `StartSessionMiddleware` has started the session, and adding a facade that just proxies array access would be a distinction without a difference. `Flash` and `SessionRegenerator` exist as separate static classes because they hold actual behaviour (aging, staleness checks), not because "a static session facade" was the goal.
 - **`ez-php/auth` is unmodified.** This module supplies the session infrastructure `ez-php/auth` already assumes exists (an active `$_SESSION`) — see `modules/auth/src/Auth.php`'s `session_status() === PHP_SESSION_ACTIVE` guards. No auth or CSRF logic lives here; `SessionCsrfTokenStore` in `ez-php/framework` also continues to work unchanged once `StartSessionMiddleware` runs ahead of it.

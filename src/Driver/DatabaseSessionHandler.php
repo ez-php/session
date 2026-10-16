@@ -15,10 +15,12 @@ use SessionUpdateTimestampHandlerInterface;
  *
  * PDO-backed session driver via `ez-php/contracts`' `DatabaseInterface`.
  * Sessions are stored in a `sessions` table, created automatically
- * (`CREATE TABLE IF NOT EXISTS`) with driver-aware DDL for MySQL and SQLite.
- * `write()` is a single driver-aware upsert, so it neither depends on
- * affected-row counts (MySQL reports 0 for an UPDATE that changes nothing)
- * nor races between two first writes of the same id.
+ * (`CREATE TABLE IF NOT EXISTS`) with driver-aware DDL: MySQL, and a portable
+ * form for SQLite and PostgreSQL. `write()` is a single driver-aware upsert,
+ * so it neither depends on affected-row counts (MySQL reports 0 for an UPDATE
+ * that changes nothing) nor races between two first writes of the same id.
+ * A session whose `last_activity` is older than `$lifetime` seconds is treated
+ * as gone by read() and validateId(), independent of PHP's probabilistic gc().
  *
  * @package EzPhp\Session\Driver
  */
@@ -28,13 +30,16 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
      * DatabaseSessionHandler Constructor
      *
      * @param DatabaseInterface $database
-     * @param string            $table Session table; interpolated into SQL, so limited to `[A-Za-z0-9_]`.
+     * @param string            $table    Session table; interpolated into SQL, so limited to `[A-Za-z0-9_]`.
+     * @param int               $lifetime Idle lifetime in seconds; a session not written for longer is expired.
+     *                                    0 (or less) disables the check and leaves expiry to gc().
      *
      * @throws SessionException When the table name contains anything but letters, digits or underscores.
      */
     public function __construct(
         private readonly DatabaseInterface $database,
         private readonly string $table = 'sessions',
+        private readonly int $lifetime = 1440,
     ) {
         if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $table) !== 1) {
             throw new SessionException("Invalid session table name '{$table}': only [A-Za-z0-9_] are allowed.");
@@ -70,11 +75,17 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
     public function read(string $id): string
     {
         $rows = $this->database->query(
-            "SELECT payload FROM {$this->table} WHERE id = :id",
+            "SELECT payload, last_activity FROM {$this->table} WHERE id = :id",
             ['id' => $id],
         );
 
         if ($rows === []) {
+            return '';
+        }
+
+        $lastActivity = $rows[0]['last_activity'] ?? null;
+
+        if ($this->lifetime > 0 && is_numeric($lastActivity) && (int) $lastActivity < time() - $this->lifetime) {
             return '';
         }
 
@@ -100,7 +111,7 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
             $sql .= ' ON DUPLICATE KEY UPDATE payload = :update_payload, last_activity = :update_now';
             $bindings += ['update_payload' => $data, 'update_now' => $now];
         } else {
-            // SQLite 3.24+ and PostgreSQL.
+            // SQLite 3.24+ and PostgreSQL 9.5+.
             $sql .= ' ON CONFLICT (id) DO UPDATE SET payload = excluded.payload, last_activity = excluded.last_activity';
         }
 
@@ -134,9 +145,16 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
      */
     public function validateId(string $id): bool
     {
+        if ($this->lifetime <= 0) {
+            return $this->database->query(
+                "SELECT 1 AS present FROM {$this->table} WHERE id = :id",
+                ['id' => $id],
+            ) !== [];
+        }
+
         return $this->database->query(
-            "SELECT 1 AS present FROM {$this->table} WHERE id = :id",
-            ['id' => $id],
+            "SELECT 1 AS present FROM {$this->table} WHERE id = :id AND last_activity >= :threshold",
+            ['id' => $id, 'threshold' => time() - $this->lifetime],
         ) !== [];
     }
 
@@ -169,7 +187,11 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
     /**
      * Create the sessions table if it does not already exist.
      *
-     * Uses driver-aware DDL to support both MySQL and SQLite.
+     * Uses driver-aware DDL: MySQL's own column types and inline index, and a
+     * portable form (TEXT/BIGINT plus a separate CREATE INDEX) for SQLite and
+     * PostgreSQL. Runs on every construction — one cheap `IF NOT EXISTS`
+     * statement pair per request that uses the database driver — so the
+     * driver works without a migration step (see the module's CLAUDE.md).
      *
      * @return void
      */
@@ -177,16 +199,17 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
     {
         $driver = $this->database->getPdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
 
-        if ($driver === 'sqlite') {
+        if ($driver !== 'mysql') {
             $this->database->getPdo()->exec(
                 "CREATE TABLE IF NOT EXISTS {$this->table} (
-                    id            TEXT    PRIMARY KEY,
-                    payload       TEXT    NOT NULL,
-                    last_activity INTEGER NOT NULL
+                    id            TEXT   PRIMARY KEY,
+                    payload       TEXT   NOT NULL,
+                    last_activity BIGINT NOT NULL
                 )"
             );
-            // Same index as the MySQL DDL, for gc(). SQLite index names are global to
-            // the database, so it is named after the table.
+            // Same index as the MySQL DDL, for gc() and the idle-lifetime check. SQLite
+            // and PostgreSQL index names are global to the database/schema, so it is
+            // named after the table.
             $this->database->getPdo()->exec(
                 "CREATE INDEX IF NOT EXISTS {$this->table}_last_activity_idx ON {$this->table} (last_activity)"
             );

@@ -12,7 +12,9 @@ use SessionUpdateTimestampHandlerInterface;
  * Class FileSessionHandler
  *
  * Filesystem session driver. Each session is stored as a file named
- * `sess_<id>` inside the configured directory.
+ * `sess_<id>` inside the configured directory. A session whose file has not
+ * been written for longer than `$lifetime` seconds is treated as gone by
+ * read() and validateId(), independent of PHP's probabilistic gc().
  *
  * @package EzPhp\Session\Driver
  */
@@ -22,9 +24,13 @@ final class FileSessionHandler implements SessionHandlerInterface, SessionUpdate
      * FileSessionHandler Constructor
      *
      * @param string $directory
+     * @param int    $lifetime  Idle lifetime in seconds; a session not written for longer is expired.
+     *                          0 (or less) disables the check and leaves expiry to gc().
      */
-    public function __construct(private readonly string $directory)
-    {
+    public function __construct(
+        private readonly string $directory,
+        private readonly int $lifetime = 1440,
+    ) {
     }
 
     /**
@@ -58,6 +64,13 @@ final class FileSessionHandler implements SessionHandlerInterface, SessionUpdate
     public function read(string $id): string
     {
         $path = $this->pathFor($id);
+
+        if ($this->isExpired($path)) {
+            self::quietly(static fn (): bool => unlink($path));
+
+            return '';
+        }
+
         $contents = self::quietly(static fn (): string|false => file_get_contents($path));
 
         return is_string($contents) ? $contents : '';
@@ -107,7 +120,9 @@ final class FileSessionHandler implements SessionHandlerInterface, SessionUpdate
             return false;
         }
 
-        return is_file($this->pathFor($id));
+        $path = $this->pathFor($id);
+
+        return is_file($path) && !$this->isExpired($path);
     }
 
     /**
@@ -143,6 +158,25 @@ final class FileSessionHandler implements SessionHandlerInterface, SessionUpdate
         }
 
         return $removed;
+    }
+
+    /**
+     * Whether the session file exists but has been idle longer than the lifetime.
+     *
+     * @param string $path
+     *
+     * @return bool
+     */
+    private function isExpired(string $path): bool
+    {
+        if ($this->lifetime <= 0) {
+            return false;
+        }
+
+        clearstatcache(true, $path);
+        $mtime = self::quietly(static fn (): int|false => filemtime($path));
+
+        return $mtime !== false && time() - $mtime > $this->lifetime;
     }
 
     /**

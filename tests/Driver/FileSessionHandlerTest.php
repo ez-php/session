@@ -181,4 +181,78 @@ final class FileSessionHandlerTest extends TestCase
     {
         $this->assertFalse($this->handler->validateId('../../etc/passwd'));
     }
+
+    /**
+     * A session idle longer than the configured lifetime is gone on read, without gc() having run
+     * (gc is probabilistic and disabled on some distributions).
+     *
+     * @return void
+     */
+    public function testReadReturnsEmptyForASessionIdleLongerThanTheLifetime(): void
+    {
+        $handler = new FileSessionHandler($this->directory, 60);
+        $handler->write('idle', 'data');
+        touch($this->directory . '/sess_idle', time() - 61);
+
+        $this->assertSame('', $handler->read('idle'));
+        $this->assertFileDoesNotExist($this->directory . '/sess_idle');
+    }
+
+    /**
+     * Under strict mode an expired id must not be adopted, so PHP issues a fresh one.
+     *
+     * @return void
+     */
+    public function testValidateIdRejectsASessionIdleLongerThanTheLifetime(): void
+    {
+        $handler = new FileSessionHandler($this->directory, 60);
+        $handler->write('idle', 'data');
+        touch($this->directory . '/sess_idle', time() - 61);
+
+        $this->assertFalse($handler->validateId('idle'));
+    }
+
+    /**
+     * @return void
+     */
+    public function testSessionWithinTheLifetimeIsStillReadable(): void
+    {
+        $handler = new FileSessionHandler($this->directory, 60);
+        $handler->write('active', 'data');
+        touch($this->directory . '/sess_active', time() - 30);
+
+        $this->assertTrue($handler->validateId('active'));
+        $this->assertSame('data', $handler->read('active'));
+    }
+
+    /**
+     * lazy_write calls updateTimestamp() for an unchanged session; it must refresh the
+     * activity time, or an active user would be logged out after the lifetime.
+     *
+     * @return void
+     */
+    public function testUpdateTimestampRefreshesTheIdleClock(): void
+    {
+        $handler = new FileSessionHandler($this->directory, 60);
+        $handler->write('active', 'data');
+        touch($this->directory . '/sess_active', time() - 50);
+
+        $handler->updateTimestamp('active', 'data');
+        clearstatcache();
+
+        $this->assertGreaterThanOrEqual(time() - 1, (int) filemtime($this->directory . '/sess_active'));
+    }
+
+    /**
+     * @return void
+     */
+    public function testLifetimeZeroDisablesTheIdleCheck(): void
+    {
+        $handler = new FileSessionHandler($this->directory, 0);
+        $handler->write('ancient', 'data');
+        touch($this->directory . '/sess_ancient', time() - 1_000_000);
+
+        $this->assertTrue($handler->validateId('ancient'));
+        $this->assertSame('data', $handler->read('ancient'));
+    }
 }

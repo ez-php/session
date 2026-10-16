@@ -136,7 +136,43 @@ final class StartSessionMiddlewareTest extends TestCase
         $this->assertSame('Lax', $options['cookie_samesite']);
         $this->assertSame(0, $options['cookie_lifetime']);
         $this->assertSame('/', $options['cookie_path']);
+        $this->assertSame(StartSessionMiddleware::iniGcMaxLifetime(), $options['gc_maxlifetime']);
         $this->assertArrayNotHasKey('name', $options);
+    }
+
+    /**
+     * gc_maxlifetime follows session.idle_lifetime, so gc() never deletes a session the
+     * handler still considers alive; 0 leaves PHP's own setting untouched.
+     *
+     * @return void
+     */
+    public function test_gc_maxlifetime_follows_the_idle_lifetime(): void
+    {
+        $long = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig(['session.idle_lifetime' => 7200]));
+        $disabled = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig(['session.idle_lifetime' => 0]));
+
+        $this->assertSame(7200, $long->options($this->makeRequest())['gc_maxlifetime']);
+        $this->assertArrayNotHasKey('gc_maxlifetime', $disabled->options($this->makeRequest()));
+    }
+
+    /**
+     * Without session.idle_lifetime the php.ini setting is kept, so a deployment that tuned
+     * session.gc_maxlifetime does not silently drop to 1440 seconds.
+     *
+     * @return void
+     */
+    public function test_idle_lifetime_defaults_to_the_php_ini_gc_maxlifetime(): void
+    {
+        $previous = ini_get('session.gc_maxlifetime');
+        ini_set('session.gc_maxlifetime', '7200');
+
+        try {
+            $this->assertSame(7200, StartSessionMiddleware::iniGcMaxLifetime());
+            $middleware = new StartSessionMiddleware(new ArraySessionHandler(), new FakeConfig());
+            $this->assertSame(7200, $middleware->options($this->makeRequest())['gc_maxlifetime']);
+        } finally {
+            ini_set('session.gc_maxlifetime', is_string($previous) ? $previous : '1440');
+        }
     }
 
     /**

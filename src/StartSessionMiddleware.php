@@ -76,7 +76,9 @@ final class StartSessionMiddleware implements MiddlewareInterface
      * Defaults: HttpOnly on, SameSite=Lax, Secure auto-detected from the
      * request (`HTTPS` server variable; set `session.cookie.secure` to true
      * explicitly when TLS terminates at a proxy), strict mode on, cookie
-     * lifetime 0 (browser session), path `/`.
+     * lifetime 0 (browser session), path `/`, and `gc_maxlifetime` equal to
+     * `session.idle_lifetime` (unset: php.ini's own `session.gc_maxlifetime`;
+     * omitted when it is 0).
      *
      * @param RequestInterface $request
      *
@@ -102,6 +104,13 @@ final class StartSessionMiddleware implements MiddlewareInterface
             'cookie_domain' => $this->string('session.cookie.domain', ''),
         ];
 
+        // Keep gc() from deleting sessions the handler still treats as alive (and vice versa).
+        $idleLifetime = $this->int('session.idle_lifetime', self::iniGcMaxLifetime());
+
+        if ($idleLifetime > 0) {
+            $options['gc_maxlifetime'] = $idleLifetime;
+        }
+
         $name = $this->string('session.cookie.name', '');
 
         if ($name !== '') {
@@ -109,6 +118,19 @@ final class StartSessionMiddleware implements MiddlewareInterface
         }
 
         return $options;
+    }
+
+    /**
+     * php.ini's `session.gc_maxlifetime` — the idle-lifetime default when
+     * `session.idle_lifetime` is not configured (PHP's own default is 1440).
+     *
+     * @return int
+     */
+    public static function iniGcMaxLifetime(): int
+    {
+        $value = ini_get('session.gc_maxlifetime');
+
+        return is_numeric($value) ? (int) $value : 1440;
     }
 
     /**

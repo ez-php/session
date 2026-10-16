@@ -85,7 +85,7 @@ final class SessionServiceProvider extends ServiceProvider
     {
         $path = self::configString($config, 'session.file.path', sys_get_temp_dir() . '/ez-session');
 
-        return new FileSessionHandler($path);
+        return new FileSessionHandler($path, self::idleLifetime($config));
     }
 
     /**
@@ -99,7 +99,7 @@ final class SessionServiceProvider extends ServiceProvider
         $database = $this->app->make(DatabaseInterface::class);
         $table = self::configString($config, 'session.database.table', 'sessions');
 
-        return new DatabaseSessionHandler($database, $table);
+        return new DatabaseSessionHandler($database, $table, self::idleLifetime($config));
     }
 
     /**
@@ -112,9 +112,23 @@ final class SessionServiceProvider extends ServiceProvider
         $host = self::configString($config, 'session.redis.host', '127.0.0.1');
         $port = self::configInt($config, 'session.redis.port', 6379);
         $database = self::configInt($config, 'session.redis.database', 0);
-        $ttl = self::configInt($config, 'session.redis.ttl', 1440);
+        $ttl = self::configInt($config, 'session.redis.ttl', max(1, self::idleLifetime($config)));
 
         return new RedisSessionHandler($host, $port, $database, $ttl);
+    }
+
+    /**
+     * Idle lifetime in seconds (`session.idle_lifetime`); 0 disables the handlers' idle
+     * check. Unset, it follows php.ini's `session.gc_maxlifetime` (PHP default 1440), so a
+     * deployment that already tuned that setting keeps its lifetime.
+     *
+     * @param ConfigInterface $config
+     *
+     * @return int
+     */
+    private static function idleLifetime(ConfigInterface $config): int
+    {
+        return self::configInt($config, 'session.idle_lifetime', StartSessionMiddleware::iniGcMaxLifetime());
     }
 
     /**

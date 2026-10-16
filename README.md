@@ -55,6 +55,15 @@ return [
         'ttl' => (int) (getenv('SESSION_REDIS_TTL') ?: 1440),
     ],
 
+    // Server-side idle lifetime (seconds). The file and database drivers treat a session
+    // not written for longer as gone on read — independent of PHP's probabilistic gc(),
+    // which is switched off on Debian/Ubuntu-packaged PHP — and StartSessionMiddleware
+    // sets gc_maxlifetime to the same value. 0 disables the check; unset, it follows
+    // php.ini's session.gc_maxlifetime (PHP default 1440).
+    'idle_lifetime' => getenv('SESSION_IDLE_LIFETIME') === false || getenv('SESSION_IDLE_LIFETIME') === ''
+        ? (int) ini_get('session.gc_maxlifetime')
+        : (int) getenv('SESSION_IDLE_LIFETIME'),
+
     // 0 disables periodic regeneration; StartSessionMiddleware otherwise
     // regenerates the session id once this many seconds have elapsed.
     'regenerate_interval' => (int) (getenv('SESSION_REGENERATE_INTERVAL') ?: 0),
