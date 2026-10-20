@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace EzPhp\Session;
 
+use EzPhp\Cache\CacheInterface;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Contracts\ServiceProvider;
 use EzPhp\Session\Driver\ArraySessionHandler;
+use EzPhp\Session\Driver\CacheSessionHandler;
 use EzPhp\Session\Driver\DatabaseSessionHandler;
 use EzPhp\Session\Driver\FileSessionHandler;
 use EzPhp\Session\Driver\RedisSessionHandler;
@@ -19,7 +21,7 @@ use SessionHandlerInterface;
  * Reads `config/session.php` and binds `SessionHandlerInterface` to the
  * driver selected by `session.driver`.
  *
- * Supported drivers: `array`, `file` (default), `database`, `redis`.
+ * Supported drivers: `array`, `file` (default), `database`, `redis`, `cache` (ez-php/cache store).
  *
  * With ez-php/framework installed it also binds the framework's
  * `CsrfTokenStoreInterface` to `SessionCsrfTokenStore`, unless already bound.
@@ -46,6 +48,7 @@ final class SessionServiceProvider extends ServiceProvider
                 'array' => new ArraySessionHandler(),
                 'database' => $this->makeDatabaseHandler($config),
                 'redis' => $this->makeRedisHandler($config),
+                'cache' => $this->makeCacheHandler($config),
                 default => $this->makeFileHandler($config),
             };
         });
@@ -112,9 +115,25 @@ final class SessionServiceProvider extends ServiceProvider
         $host = self::configString($config, 'session.redis.host', '127.0.0.1');
         $port = self::configInt($config, 'session.redis.port', 6379);
         $database = self::configInt($config, 'session.redis.database', 0);
-        $ttl = self::configInt($config, 'session.redis.ttl', max(1, self::idleLifetime($config)));
+        $ttl = self::configInt($config, 'session.redis.ttl', self::storeTtl($config));
 
         return new RedisSessionHandler($host, $port, $database, $ttl);
+    }
+
+    /**
+     * Sessions on the application's ez-php/cache store (`CacheInterface` from the container).
+     *
+     * @param ConfigInterface $config
+     *
+     * @return CacheSessionHandler
+     */
+    private function makeCacheHandler(ConfigInterface $config): CacheSessionHandler
+    {
+        /** @var CacheInterface $cache */
+        $cache = $this->app->make(CacheInterface::class);
+        $prefix = self::configString($config, 'session.cache.prefix', 'session:');
+
+        return new CacheSessionHandler($cache, self::storeTtl($config), $prefix);
     }
 
     /**
@@ -129,6 +148,27 @@ final class SessionServiceProvider extends ServiceProvider
     private static function idleLifetime(ConfigInterface $config): int
     {
         return self::configInt($config, 'session.idle_lifetime', StartSessionMiddleware::iniGcMaxLifetime());
+    }
+
+    /**
+     * Entry TTL for the stores that expire sessions themselves (redis, cache): the idle
+     * lifetime, or — when `session.idle_lifetime` is 0 (idle check disabled) — the longer of
+     * the cookie lifetime and php.ini's `session.gc_maxlifetime`. A TTL of 0 would be "never
+     * expire" there, and nothing else ever deletes those entries.
+     *
+     * @param ConfigInterface $config
+     *
+     * @return int At least 1.
+     */
+    private static function storeTtl(ConfigInterface $config): int
+    {
+        $idle = self::idleLifetime($config);
+
+        if ($idle > 0) {
+            return $idle;
+        }
+
+        return max(1, self::configInt($config, 'session.cookie.lifetime', 0), StartSessionMiddleware::iniGcMaxLifetime());
     }
 
     /**

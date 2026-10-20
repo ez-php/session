@@ -4,11 +4,17 @@ declare(strict_types=1);
 
 namespace Tests;
 
+use EzPhp\Cache\ArrayDriver;
+use EzPhp\Cache\CacheInterface;
 use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Session\Driver\ArraySessionHandler;
+use EzPhp\Session\Driver\CacheSessionHandler;
 use EzPhp\Session\Driver\DatabaseSessionHandler;
 use EzPhp\Session\Driver\FileSessionHandler;
+use EzPhp\Session\Driver\RedisSessionHandler;
+use EzPhp\Session\SessionException;
 use EzPhp\Session\SessionServiceProvider;
+use EzPhp\Session\StartSessionMiddleware;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 use SessionHandlerInterface;
@@ -25,8 +31,12 @@ use Tests\Support\FakeContainer;
  */
 #[CoversClass(SessionServiceProvider::class)]
 #[UsesClass(ArraySessionHandler::class)]
+#[UsesClass(CacheSessionHandler::class)]
 #[UsesClass(FileSessionHandler::class)]
 #[UsesClass(DatabaseSessionHandler::class)]
+#[UsesClass(RedisSessionHandler::class)]
+#[UsesClass(SessionException::class)]
+#[UsesClass(StartSessionMiddleware::class)]
 final class SessionServiceProviderTest extends TestCase
 {
     /**
@@ -67,6 +77,94 @@ final class SessionServiceProviderTest extends TestCase
         $provider->register();
 
         $this->assertInstanceOf(DatabaseSessionHandler::class, $container->make(SessionHandlerInterface::class));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_register_binds_cache_driver_on_the_bound_cache(): void
+    {
+        $container = new FakeContainer(new FakeConfig(['session.driver' => 'cache', 'session.idle_lifetime' => 600]));
+        $cache = new ArrayDriver();
+        $container->instance(CacheInterface::class, $cache);
+
+        (new SessionServiceProvider($container))->register();
+        $handler = $container->make(SessionHandlerInterface::class);
+
+        $this->assertInstanceOf(CacheSessionHandler::class, $handler);
+        $handler->write('abc', 'payload');
+        $this->assertSame('payload', $cache->get('session:abc'));
+    }
+
+    /**
+     * session.idle_lifetime = 0 disables the idle check, but a cache entry still needs a
+     * finite TTL (0 = never expire, and the cache handler's gc() reclaims nothing): the
+     * provider falls back to the longer of the cookie lifetime and php.ini's gc_maxlifetime.
+     *
+     * @return void
+     */
+    public function test_cache_driver_gets_a_finite_ttl_when_the_idle_check_is_disabled(): void
+    {
+        $iniTtl = StartSessionMiddleware::iniGcMaxLifetime();
+        $cookieLifetime = $iniTtl + 3600;
+        $container = new FakeContainer(new FakeConfig([
+            'session.driver' => 'cache',
+            'session.idle_lifetime' => 0,
+            'session.cookie.lifetime' => $cookieLifetime,
+        ]));
+        $container->instance(CacheInterface::class, new ArrayDriver());
+
+        (new SessionServiceProvider($container))->register();
+
+        $this->assertSame($cookieLifetime, self::handlerTtl($container->make(SessionHandlerInterface::class)));
+
+        $browserSession = new FakeContainer(new FakeConfig(['session.driver' => 'cache', 'session.idle_lifetime' => 0]));
+        $browserSession->instance(CacheInterface::class, new ArrayDriver());
+        (new SessionServiceProvider($browserSession))->register();
+
+        $this->assertSame($iniTtl, self::handlerTtl($browserSession->make(SessionHandlerInterface::class)));
+    }
+
+    /**
+     * The redis driver's default TTL used to be max(1, idle lifetime) — with the idle check
+     * disabled that was a one-second session. It now uses the same fallback as the cache driver.
+     *
+     * @return void
+     */
+    public function test_redis_driver_gets_the_same_fallback_ttl_when_the_idle_check_is_disabled(): void
+    {
+        if (!extension_loaded('redis')) {
+            $this->markTestSkipped('The "redis" PHP extension is not loaded.');
+        }
+
+        $container = new FakeContainer(new FakeConfig([
+            'session.driver' => 'redis',
+            'session.idle_lifetime' => 0,
+            'session.redis.host' => getenv('REDIS_HOST') ?: '127.0.0.1',
+            'session.redis.port' => (int) (getenv('REDIS_PORT') ?: 6379),
+        ]));
+        (new SessionServiceProvider($container))->register();
+
+        try {
+            $handler = $container->make(SessionHandlerInterface::class);
+        } catch (SessionException $e) {
+            $this->markTestSkipped('Redis server not reachable: ' . $e->getMessage());
+        }
+
+        $this->assertSame(StartSessionMiddleware::iniGcMaxLifetime(), self::handlerTtl($handler));
+    }
+
+    /**
+     * @param object $handler
+     *
+     * @return int
+     */
+    private static function handlerTtl(object $handler): int
+    {
+        $ttl = (new \ReflectionProperty($handler, 'ttl'))->getValue($handler);
+        self::assertIsInt($ttl);
+
+        return $ttl;
     }
 
     /**

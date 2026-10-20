@@ -1,6 +1,6 @@
 # ez-php/session
 
-Session handler drivers (File/Database/Redis/Array), `StartSessionMiddleware`, flash data, and session id regeneration for ez-php applications.
+Session handler drivers (File/Database/Redis/Cache/Array), `StartSessionMiddleware`, flash data, and session id regeneration for ez-php applications.
 
 ---
 
@@ -55,6 +55,11 @@ return [
         'ttl' => (int) (getenv('SESSION_REDIS_TTL') ?: 1440),
     ],
 
+    // driver = cache: sessions on the application's ez-php/cache store
+    'cache' => [
+        'prefix' => getenv('SESSION_CACHE_PREFIX') ?: 'session:',
+    ],
+
     // Server-side idle lifetime (seconds). The file and database drivers treat a session
     // not written for longer as gone on read — independent of PHP's probabilistic gc(),
     // which is switched off on Debian/Ubuntu-packaged PHP — and StartSessionMiddleware
@@ -94,6 +99,7 @@ every bundled handler implements `SessionUpdateTimestampHandlerInterface::valida
 | File | `file` (default) | Files under `session.file.path` |
 | Database | `database` | `sessions` table, created automatically |
 | Redis | `redis` | Native TTL, no `gc()` sweep needed |
+| Cache | `cache` | Any `ez-php/cache` store bound as `CacheInterface` (e.g. Memcached); TTL = `idle_lifetime` (with `0`: the longer of `session.cookie.lifetime` and php.ini's `session.gc_maxlifetime`), keys prefixed `session.cache.prefix` (default `session:`); requires `ez-php/cache` |
 
 ### 4. Flash data
 

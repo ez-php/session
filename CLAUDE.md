@@ -264,7 +264,7 @@ When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array i
 
 # Package: ez-php/session
 
-Session handler drivers (File/Database/Redis/Array), `StartSessionMiddleware`, flash data, and session id regeneration for ez-php applications.
+Session handler drivers (File/Database/Redis/Cache/Array), `StartSessionMiddleware`, flash data, and session id regeneration for ez-php applications.
 
 ---
 
@@ -281,7 +281,8 @@ src/
     ├── ArraySessionHandler.php       — In-process driver; process lifetime only (tests, CLI)
     ├── FileSessionHandler.php        — Filesystem driver; sess_<id> files, path-traversal-safe id validation, idle-lifetime check on read/validateId
     ├── DatabaseSessionHandler.php    — PDO-backed driver via DatabaseInterface; auto-creates `sessions` table (MySQL / portable SQLite+PostgreSQL DDL), idle-lifetime check
-    └── RedisSessionHandler.php       — ext-redis driver; native TTL, no gc() sweep needed
+    ├── RedisSessionHandler.php       — ext-redis driver; native TTL, no gc() sweep needed
+    └── CacheSessionHandler.php       — any ez-php/cache store (e.g. Memcached); TTL = idle lifetime (≥ 1 s), prefixed keys; soft dependency
 
 tests/
 ├── TestCase.php                      — Base PHPUnit test case
@@ -289,7 +290,7 @@ tests/
 ├── FlashTest.php                     — Aging, set/get round-trip, keep(), forget(), all(), not-active guard
 ├── SessionRegeneratorTest.php        — regenerate(), regenerateIfStale() interval logic, not-active guard
 ├── StartSessionMiddlewareTest.php    — Session start, idempotent re-entry, flash aging, periodic regeneration, gc_maxlifetime
-├── SessionServiceProviderTest.php    — Driver selection from config, unknown-value fallback, idle_lifetime reaches the file/database drivers
+├── SessionServiceProviderTest.php    — Driver selection from config, unknown-value fallback, idle_lifetime reaches the file/database drivers, finite redis/cache TTL with the idle check disabled
 ├── Support/
 │   ├── FakeConfig.php                — Minimal ConfigInterface stub
 │   └── FakeContainer.php             — Minimal ContainerInterface stub (bindings + instances)
@@ -298,6 +299,7 @@ tests/
     ├── FileSessionHandlerTest.php    — Includes path-traversal rejection, gc() and the idle-lifetime check via touch()-backdated mtimes
     ├── DatabaseSessionHandlerTest.php — Runs against SQLite :memory: via Tests\SessionPdoDatabase; gc() and idle-lifetime via backdated last_activity
     ├── DatabaseSessionHandlerMysqlTest.php — Same handler on MySQL (unchanged-payload rewrite, updateTimestamp); skipped without DB_HOST
+    ├── CacheSessionHandlerTest.php — CacheSessionHandler on ez-php/cache's ArrayDriver: round trip, prefix/TTL, expiry, validateId, TTL < 1 rejected
     └── RedisSessionHandlerTest.php   — Requires live Redis at `REDIS_HOST`/`REDIS_PORT` (default `redis:6379`): module stack `redis` service (host port 6387), CI `redis` service container, or the root stack; skipped when ext-redis is unavailable
 ```
 
@@ -307,7 +309,7 @@ tests/
 
 ### The driver contract
 
-All four drivers implement PHP's native `\SessionHandlerInterface` (`open`, `close`, `read`, `write`, `destroy`, `gc`) rather than a module-defined interface — sessions are inherently a native PHP mechanism (`$_SESSION`, `session_set_save_handler()`), and every other piece of session-reading code in this monorepo (`ez-php/auth`'s `Auth`, `ez-php/framework`'s `SessionCsrfTokenStore`) already assumes `$_SESSION` is the access point. Building a parallel `SessionInterface` would mean two ways to read the same data.
+All five drivers implement PHP's native `\SessionHandlerInterface` (`open`, `close`, `read`, `write`, `destroy`, `gc`) rather than a module-defined interface — sessions are inherently a native PHP mechanism (`$_SESSION`, `session_set_save_handler()`), and every other piece of session-reading code in this monorepo (`ez-php/auth`'s `Auth`, `ez-php/framework`'s `SessionCsrfTokenStore`) already assumes `$_SESSION` is the access point. Building a parallel `SessionInterface` would mean two ways to read the same data.
 
 ### ArraySessionHandler (`src/Driver/ArraySessionHandler.php`)
 
@@ -323,7 +325,11 @@ PDO-backed via `DatabaseInterface` from `ez-php/contracts` (not a raw `PDO` cons
 
 ### RedisSessionHandler (`src/Driver/RedisSessionHandler.php`)
 
-`ext-redis`-backed, keys under `session:<id>`, written with `SETEX` using the configured TTL. Expiry is entirely Redis-native — `gc()` is a no-op, unlike the other three drivers.
+`ext-redis`-backed, keys under `session:<id>`, written with `SETEX` using the configured TTL. Expiry is entirely Redis-native — `gc()` is a no-op, as for `CacheSessionHandler`.
+
+### CacheSessionHandler (`src/Driver/CacheSessionHandler.php`)
+
+Stores sessions as strings in an `ez-php/cache` `CacheInterface` under `<prefix><id>` (default `session:`), TTL = the idle lifetime — or, with `session.idle_lifetime = 0`, the longer of `session.cookie.lifetime` and php.ini's `session.gc_maxlifetime` (`SessionServiceProvider::storeTtl()`); the constructor rejects a TTL below 1, since the cache's TTL `0` means "never expire" and `gc()` is a no-op like the Redis driver, so nothing would ever reclaim the entry. Gives Memcached deployments (and any other configured cache store) a session driver. `ez-php/cache` is a soft dependency (`require-dev` + `suggest`), the class is only autoloaded for `session.driver = cache`, which resolves `CacheInterface` from the container.
 
 ### Flash (`src/Flash.php`)
 
@@ -350,14 +356,15 @@ Reads `config/session.php` and binds `\SessionHandlerInterface` lazily to the dr
 
 | Config key | Type | Default | Meaning |
 |---|---|---|---|
-| `session.driver` | string | `'file'` | `'array'`, `'file'`, `'database'`, or `'redis'` |
+| `session.driver` | string | `'file'` | `'array'`, `'file'`, `'database'`, `'redis'`, or `'cache'` (the container's `CacheInterface`) |
 | `session.file.path` | string | `sys_get_temp_dir() . '/ez-session'` | Directory for `FileSessionHandler` |
 | `session.database.table` | string | `'sessions'` | Table name for `DatabaseSessionHandler` |
 | `session.redis.host` | string | `'127.0.0.1'` | Redis hostname |
 | `session.redis.port` | int | `6379` | Redis port |
 | `session.redis.database` | int | `0` | Redis database index |
-| `session.idle_lifetime` | int | php.ini `session.gc_maxlifetime` (PHP default `1440`) | Server-side idle lifetime (seconds) for the file and database drivers, and `gc_maxlifetime` in `StartSessionMiddleware`; `0` disables the idle check |
-| `session.redis.ttl` | int | `session.idle_lifetime` | Redis key TTL (seconds) — the redis driver's idle lifetime |
+| `session.idle_lifetime` | int | php.ini `session.gc_maxlifetime` (PHP default `1440`) | Server-side idle lifetime (seconds) for the file and database drivers, and `gc_maxlifetime` in `StartSessionMiddleware`; `0` disables the idle check — the redis/cache drivers, whose store does the expiry, then use the longer of `session.cookie.lifetime` and php.ini's `session.gc_maxlifetime` as their TTL |
+| `session.redis.ttl` | int | `session.idle_lifetime` (with `0`: the longer of `session.cookie.lifetime` and php.ini's `session.gc_maxlifetime`) | Redis key TTL (seconds) — the redis driver's idle lifetime |
+| `session.cache.prefix` | string | `'session:'` | Key prefix of the cache driver |
 | `session.regenerate_interval` | int | `0` | Seconds between automatic id regenerations; `0` disables the feature |
 | `session.strict_mode` | bool | `true` | `use_strict_mode`: never adopt a client-chosen id (fixation) |
 | `session.cookie.name` | string | `''` | Cookie name; `''` keeps PHP's `session.name` |
@@ -376,7 +383,7 @@ Unknown driver values fall back to `FileSessionHandler`. `register()` also binds
 
 - **`\SessionHandlerInterface`, not a module-owned interface.** See "The driver contract" above — this is the one module in the monorepo where matching PHP's own native mechanism is the right call, rather than following the `CacheInterface`/`RateLimiterInterface` pattern of a project-defined contract with N drivers behind it.
 - **`Flash` and `SessionRegenerator` are documented global state.** Both operate on `$_SESSION` directly via static methods rather than an injected, constructor-wired instance. This mirrors how `ez-php/auth`'s `Auth` and `ez-php/framework`'s `SessionCsrfTokenStore` already work — `$_SESSION` is PHP's own global, and wrapping it in a DI-friendly instance would not remove the global state, only hide it behind an extra layer that every other session consumer in this monorepo doesn't have.
-- **Sessions start hardened, not with PHP's defaults** — PHP defaults to no `HttpOnly`, no `SameSite` and `use_strict_mode=0`, which with a custom save handler adopts any id a client sends (session fixation). `StartSessionMiddleware::options()` passes secure defaults to `session_start()`, all overridable via `session.cookie.*`/`session.strict_mode`. `Secure` is auto-detected from the `HTTPS` server variable (not `X-Forwarded-Proto`, which a client can forge) — set `session.cookie.secure` to `true` explicitly behind a TLS-terminating proxy. Strict mode only works with a user handler that implements `SessionUpdateTimestampHandlerInterface::validateId()`, so all four bundled handlers do (`updateTimestamp()` delegates to `write()`).
+- **Sessions start hardened, not with PHP's defaults** — PHP defaults to no `HttpOnly`, no `SameSite` and `use_strict_mode=0`, which with a custom save handler adopts any id a client sends (session fixation). `StartSessionMiddleware::options()` passes secure defaults to `session_start()`, all overridable via `session.cookie.*`/`session.strict_mode`. `Secure` is auto-detected from the `HTTPS` server variable (not `X-Forwarded-Proto`, which a client can forge) — set `session.cookie.secure` to `true` explicitly behind a TLS-terminating proxy. Strict mode only works with a user handler that implements `SessionUpdateTimestampHandlerInterface::validateId()`, so all bundled handlers do (`updateTimestamp()` delegates to `write()`).
 - **`StartSessionMiddleware` reads `regenerate_interval` from `ConfigInterface` at call time, not a constructor scalar.** A plain `int $regenerateInterval` constructor parameter would need an explicit binding for the container to autowire it (primitives are not autowireable), forcing users to configure the middleware in a service provider by hand instead of `config/session.php`. Injecting `ConfigInterface` (always bound by the core `ConfigServiceProvider`) keeps `StartSessionMiddleware::class` addable via `$app->middleware()` with zero extra wiring.
 - **The file and database drivers enforce the idle lifetime on read, not only in `gc()`.** PHP runs `gc()` probabilistically (`session.gc_probability`/`gc_divisor`), and Debian/Ubuntu-packaged PHP sets the probability to 0 and relies on a cron job that only knows about the default files handler — so with a custom handler, sessions (and a stolen session id) would never expire there. `read()` treating an idle session as empty and `validateId()` rejecting it makes expiry deterministic; under strict mode the client then gets a fresh id. `StartSessionMiddleware` sets `gc_maxlifetime` to the same value so `gc()` never deletes a session the handler still considers alive. When `session.idle_lifetime` is unset, the provider, the middleware and the template config all fall back to php.ini's `session.gc_maxlifetime` (`StartSessionMiddleware::iniGcMaxLifetime()`), so a deployment that already tuned it keeps its lifetime instead of silently dropping to 1440 s; the handlers' own constructor default (1440) applies only to direct construction. Redis needs neither: its key TTL is the idle lifetime. `session.idle_lifetime` is deliberately separate from `session.cookie.lifetime` (env `SESSION_LIFETIME`), which only controls the browser cookie.
 - **`DatabaseSessionHandler` creates its table on every construction.** One `CREATE TABLE IF NOT EXISTS` (plus `CREATE INDEX IF NOT EXISTS` outside MySQL) per request that resolves the database driver, so the driver works without a migration step — the same trade-off `ez-php/queue`'s `DatabaseDriver` makes. Both statements are no-ops once the table exists; an application that wants zero DDL at runtime can create the table in a migration and bind its own handler.
