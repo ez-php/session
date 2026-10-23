@@ -23,6 +23,7 @@
   },
   "suggest": {
     "ext-redis": "Needed for Driver\\RedisSessionHandler",
+    "ez-php/console": "Needed for the session:gc command",
     "ez-php/cache": "Needed for Driver\\CacheSessionHandler (sessions on any ez-php/cache store, e.g. Memcached)",
     "ez-php/framework": "Binds CsrfTokenStoreInterface → SessionCsrfTokenStore for CsrfMiddleware (by class-name string, only when installed)"
   },
@@ -33,7 +34,8 @@
     "friendsofphp/php-cs-fixer": "^3.94",
     "phpstan/phpstan-strict-rules": "^2.0",
     "phpstan/phpstan-deprecation-rules": "^2.0",
-    "ez-php/cache": "^2.0"
+    "ez-php/cache": "^2.0",
+    "ez-php/console": "^2.0"
   },
   "autoload": {
     "psr-4": {

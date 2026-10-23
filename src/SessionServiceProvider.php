@@ -8,6 +8,7 @@ use EzPhp\Cache\CacheInterface;
 use EzPhp\Contracts\ConfigInterface;
 use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Contracts\ServiceProvider;
+use EzPhp\Session\Console\SessionGcCommand;
 use EzPhp\Session\Driver\ArraySessionHandler;
 use EzPhp\Session\Driver\CacheSessionHandler;
 use EzPhp\Session\Driver\DatabaseSessionHandler;
@@ -34,6 +35,17 @@ use SessionHandlerInterface;
  */
 final class SessionServiceProvider extends ServiceProvider
 {
+    /**
+     * Registers `session:gc` (needs ez-php/console, a suggest; registered by class
+     * name, so nothing is autoloaded unless the application's console runs it).
+     *
+     * @return void
+     */
+    public function boot(): void
+    {
+        $this->registerCommand(SessionGcCommand::class);
+    }
+
     /**
      * @return void
      */
@@ -148,6 +160,20 @@ final class SessionServiceProvider extends ServiceProvider
     private static function idleLifetime(ConfigInterface $config): int
     {
         return self::configInt($config, 'session.idle_lifetime', StartSessionMiddleware::iniGcMaxLifetime());
+    }
+
+    /**
+     * The idle lifetime `session:gc` deletes by: the one the file/database handlers
+     * enforce on read, or — with `session.idle_lifetime = 0` — the longer of the
+     * cookie lifetime and php.ini's `session.gc_maxlifetime` (the store TTL).
+     *
+     * @param ConfigInterface $config
+     *
+     * @return int
+     */
+    public static function gcLifetime(ConfigInterface $config): int
+    {
+        return self::storeTtl($config);
     }
 
     /**

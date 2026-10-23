@@ -122,6 +122,17 @@ SessionRegenerator::regenerateIfStale(1800);       // only if 30 minutes have pa
 
 `ez-php/auth` already regenerates the id on login/logout itself — `SessionRegenerator` is for periodic regeneration of a long-lived session, independent of authentication.
 
+### 6. Deleting expired sessions
+
+Expired sessions are rejected on read, but their files/rows are only deleted by `gc()` — which PHP runs probabilistically, and Debian/Ubuntu PHP not at all (`session.gc_probability = 0`). Schedule the registered command instead:
+
+```bash
+php ez session:gc                  # idle lifetime from config/session.php
+php ez session:gc --lifetime=3600  # explicit
+```
+
+With the redis or cache driver it is a no-op — those stores expire keys themselves.
+
 ---
 
 ## License
