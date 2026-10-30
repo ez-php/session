@@ -1,6 +1,6 @@
 {
   "name": "ez-php/session",
-  "version": "2.6.5",
+  "version": "2.7.0",
   "description": "Session handler drivers (File/Database/Redis/Array), StartSession middleware, flash data, ID regeneration",
   "type": "library",
   "license": "MIT",
@@ -18,8 +18,8 @@
   },
   "require": {
     "php": "^8.5",
-    "ez-php/contracts": "^2.6.0",
-    "ez-php/http": "^2.6.0"
+    "ez-php/contracts": "^2.7.0",
+    "ez-php/http": "^2.7.0"
   },
   "suggest": {
     "ext-redis": "Needed for Driver\\RedisSessionHandler",
@@ -28,14 +28,14 @@
     "ez-php/framework": "Binds CsrfTokenStoreInterface → SessionCsrfTokenStore for CsrfMiddleware (by class-name string, only when installed)"
   },
   "require-dev": {
-    "ez-php/docker": "^2.6.0",
+    "ez-php/docker": "^2.7.0",
     "phpunit/phpunit": "^13.0",
     "phpstan/phpstan": "^2.1",
     "friendsofphp/php-cs-fixer": "^3.94",
     "phpstan/phpstan-strict-rules": "^2.0",
     "phpstan/phpstan-deprecation-rules": "^2.0",
-    "ez-php/cache": "^2.6.0",
-    "ez-php/console": "^2.6.0"
+    "ez-php/cache": "^2.7.0",
+    "ez-php/console": "^2.7.0"
   },
   "autoload": {
     "psr-4": {
