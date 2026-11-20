@@ -7,6 +7,7 @@ namespace EzPhp\Session\Driver;
 use EzPhp\Session\SessionException;
 use Redis;
 use SessionHandlerInterface;
+use SessionIdInterface;
 use SessionUpdateTimestampHandlerInterface;
 
 /**
@@ -18,7 +19,7 @@ use SessionUpdateTimestampHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class RedisSessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
+final class RedisSessionHandler implements SessionHandlerInterface, SessionIdInterface, SessionUpdateTimestampHandlerInterface
 {
     private const KEY_PREFIX = 'session:';
 
@@ -111,6 +112,20 @@ final class RedisSessionHandler implements SessionHandlerInterface, SessionUpdat
         $this->redis->del(self::KEY_PREFIX . $id);
 
         return true;
+    }
+
+    /**
+     * Generate the id for a new session (`session_start()` without a valid
+     * cookie, `session_regenerate_id()`).
+     *
+     * Implementing `SessionIdInterface` keeps PHP from falling back to its
+     * internal generator, which PHP 8.6 deprecates for user save handlers.
+     *
+     * @return string
+     */
+    public function create_sid(): string
+    {
+        return SessionIdGenerator::generate();
     }
 
     /**

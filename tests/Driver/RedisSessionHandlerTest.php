@@ -5,7 +5,10 @@ declare(strict_types=1);
 namespace Tests\Driver;
 
 use EzPhp\Session\Driver\RedisSessionHandler;
+use EzPhp\Session\Driver\SessionIdGenerator;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\UsesClass;
+use SessionIdInterface;
 use Tests\TestCase;
 use Throwable;
 
@@ -19,6 +22,7 @@ use Throwable;
  * @package Tests\Driver
  */
 #[CoversClass(RedisSessionHandler::class)]
+#[UsesClass(SessionIdGenerator::class)]
 final class RedisSessionHandlerTest extends TestCase
 {
     private const string HOST = 'redis';
@@ -132,5 +136,20 @@ final class RedisSessionHandlerTest extends TestCase
         $this->assertSame('payload', $this->handler->read($id));
 
         $this->handler->destroy($id);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_create_sid_returns_a_fresh_hex_id(): void
+    {
+        $handler = $this->handler;
+
+        $this->assertInstanceOf(SessionIdInterface::class, $handler);
+
+        $id = $handler->create_sid();
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $id);
+        $this->assertNotSame($id, $handler->create_sid());
     }
 }

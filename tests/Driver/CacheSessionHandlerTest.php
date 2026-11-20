@@ -6,8 +6,11 @@ namespace Tests\Driver;
 
 use EzPhp\Cache\ArrayDriver;
 use EzPhp\Session\Driver\CacheSessionHandler;
+use EzPhp\Session\Driver\SessionIdGenerator;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\UsesClass;
+use SessionIdInterface;
 use Tests\TestCase;
 
 /**
@@ -16,6 +19,7 @@ use Tests\TestCase;
  * @package Tests\Driver
  */
 #[CoversClass(CacheSessionHandler::class)]
+#[UsesClass(SessionIdGenerator::class)]
 final class CacheSessionHandlerTest extends TestCase
 {
     public function test_write_read_destroy_round_trip(): void
@@ -81,5 +85,20 @@ final class CacheSessionHandlerTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new CacheSessionHandler(new ArrayDriver(), ttl: 0);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_create_sid_returns_a_fresh_hex_id(): void
+    {
+        $handler = new CacheSessionHandler(new ArrayDriver());
+
+        $this->assertInstanceOf(SessionIdInterface::class, $handler);
+
+        $id = $handler->create_sid();
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $id);
+        $this->assertNotSame($id, $handler->create_sid());
     }
 }

@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Tests\Driver;
 
 use EzPhp\Session\Driver\FileSessionHandler;
+use EzPhp\Session\Driver\SessionIdGenerator;
 use EzPhp\Session\SessionException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
+use SessionIdInterface;
 use Tests\TestCase;
 
 /**
@@ -16,6 +18,7 @@ use Tests\TestCase;
  * @package Tests\Driver
  */
 #[CoversClass(FileSessionHandler::class)]
+#[UsesClass(SessionIdGenerator::class)]
 #[UsesClass(SessionException::class)]
 final class FileSessionHandlerTest extends TestCase
 {
@@ -254,5 +257,20 @@ final class FileSessionHandlerTest extends TestCase
 
         $this->assertTrue($handler->validateId('ancient'));
         $this->assertSame('data', $handler->read('ancient'));
+    }
+
+    /**
+     * @return void
+     */
+    public function test_create_sid_returns_a_fresh_hex_id(): void
+    {
+        $handler = $this->handler;
+
+        $this->assertInstanceOf(SessionIdInterface::class, $handler);
+
+        $id = $handler->create_sid();
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $id);
+        $this->assertNotSame($id, $handler->create_sid());
     }
 }

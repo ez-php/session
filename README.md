@@ -91,7 +91,9 @@ return [
 
 `StartSessionMiddleware` starts every session with these hardened settings instead of PHP's
 permissive defaults (no `HttpOnly`, no `SameSite`, `use_strict_mode=0`). Strict mode works because
-every bundled handler implements `SessionUpdateTimestampHandlerInterface::validateId()`.
+every bundled handler implements `SessionUpdateTimestampHandlerInterface::validateId()`. They also
+implement `SessionIdInterface::create_sid()` (32 random hex characters), which PHP 8.6 expects from
+user save handlers — without it, PHP deprecates falling back to its internal id generator.
 
 | Driver | Value | Notes |
 |---|---|---|

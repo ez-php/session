@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace EzPhp\Session\Driver;
 
 use SessionHandlerInterface;
+use SessionIdInterface;
 use SessionUpdateTimestampHandlerInterface;
 
 /**
@@ -16,7 +17,7 @@ use SessionUpdateTimestampHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class ArraySessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
+final class ArraySessionHandler implements SessionHandlerInterface, SessionIdInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * @var array<string, array{data: string, timestamp: int}>
@@ -75,6 +76,20 @@ final class ArraySessionHandler implements SessionHandlerInterface, SessionUpdat
         unset($this->store[$id]);
 
         return true;
+    }
+
+    /**
+     * Generate the id for a new session (`session_start()` without a valid
+     * cookie, `session_regenerate_id()`).
+     *
+     * Implementing `SessionIdInterface` keeps PHP from falling back to its
+     * internal generator, which PHP 8.6 deprecates for user save handlers.
+     *
+     * @return string
+     */
+    public function create_sid(): string
+    {
+        return SessionIdGenerator::generate();
     }
 
     /**

@@ -7,6 +7,7 @@ namespace EzPhp\Session\Driver;
 use EzPhp\Cache\CacheInterface;
 use InvalidArgumentException;
 use SessionHandlerInterface;
+use SessionIdInterface;
 use SessionUpdateTimestampHandlerInterface;
 
 /**
@@ -26,7 +27,7 @@ use SessionUpdateTimestampHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final readonly class CacheSessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
+final readonly class CacheSessionHandler implements SessionHandlerInterface, SessionIdInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * @param CacheInterface $cache  Backing cache store.
@@ -100,6 +101,20 @@ final readonly class CacheSessionHandler implements SessionHandlerInterface, Ses
         $this->cache->forget($this->prefix . $id);
 
         return true;
+    }
+
+    /**
+     * Generate the id for a new session (`session_start()` without a valid
+     * cookie, `session_regenerate_id()`).
+     *
+     * Implementing `SessionIdInterface` keeps PHP from falling back to its
+     * internal generator, which PHP 8.6 deprecates for user save handlers.
+     *
+     * @return string
+     */
+    public function create_sid(): string
+    {
+        return SessionIdGenerator::generate();
     }
 
     /**

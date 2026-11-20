@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Tests\Driver;
 
 use EzPhp\Session\Driver\DatabaseSessionHandler;
+use EzPhp\Session\Driver\SessionIdGenerator;
 use EzPhp\Session\SessionException;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\UsesClass;
+use SessionIdInterface;
 use Tests\SessionPdoDatabase;
 use Tests\TestCase;
 
@@ -19,6 +22,7 @@ use Tests\TestCase;
  * @uses \Tests\SessionPdoDatabase
  */
 #[CoversClass(DatabaseSessionHandler::class)]
+#[UsesClass(SessionIdGenerator::class)]
 final class DatabaseSessionHandlerTest extends TestCase
 {
     private SessionPdoDatabase $database;
@@ -272,5 +276,20 @@ final class DatabaseSessionHandlerTest extends TestCase
             'UPDATE sessions SET last_activity = :ts WHERE id = :id',
             ['ts' => time() - $seconds, 'id' => $id],
         );
+    }
+
+    /**
+     * @return void
+     */
+    public function test_create_sid_returns_a_fresh_hex_id(): void
+    {
+        $handler = $this->handler;
+
+        $this->assertInstanceOf(SessionIdInterface::class, $handler);
+
+        $id = $handler->create_sid();
+
+        $this->assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $id);
+        $this->assertNotSame($id, $handler->create_sid());
     }
 }

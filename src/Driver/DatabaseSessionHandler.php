@@ -8,6 +8,7 @@ use EzPhp\Contracts\DatabaseInterface;
 use EzPhp\Session\SessionException;
 use PDO;
 use SessionHandlerInterface;
+use SessionIdInterface;
 use SessionUpdateTimestampHandlerInterface;
 
 /**
@@ -24,7 +25,7 @@ use SessionUpdateTimestampHandlerInterface;
  *
  * @package EzPhp\Session\Driver
  */
-final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUpdateTimestampHandlerInterface
+final class DatabaseSessionHandler implements SessionHandlerInterface, SessionIdInterface, SessionUpdateTimestampHandlerInterface
 {
     /**
      * DatabaseSessionHandler Constructor
@@ -130,6 +131,20 @@ final class DatabaseSessionHandler implements SessionHandlerInterface, SessionUp
         $this->database->execute("DELETE FROM {$this->table} WHERE id = :id", ['id' => $id]);
 
         return true;
+    }
+
+    /**
+     * Generate the id for a new session (`session_start()` without a valid
+     * cookie, `session_regenerate_id()`).
+     *
+     * Implementing `SessionIdInterface` keeps PHP from falling back to its
+     * internal generator, which PHP 8.6 deprecates for user save handlers.
+     *
+     * @return string
+     */
+    public function create_sid(): string
+    {
+        return SessionIdGenerator::generate();
     }
 
     /**
